@@ -35,20 +35,26 @@ const iso = n => numDate(n).toISOString().slice(0, 10);
 const fmtDate = n => numDate(n).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit', timeZone: 'UTC' });
 
 const TODAYNUM = dayNum(new Date());
-const HISTORY = new Map();      // puzzle number -> word
+const HISTORY = new Map();      // puzzle number -> word, strictly BEFORE today
 let histSource = 'none';        // none | file | live
 let liveOk = null;              // null = untried, true/false after an attempt
+
+/* Today's puzzle is deliberately never recorded. The archive is a record of
+   what the answer has already been; if today's answer leaked into it, the
+   solver would file today's word under "previously an answer", age it at zero
+   days and weight it down to nothing — steering away from the correct word. */
+const isPast = n => n >= 0 && n < TODAYNUM;
 
 async function loadHistory() {
   try {
     const r = await fetch('past.json', { cache: 'no-cache' });
     if (r.ok) {
       const j = await r.json();
-      (j.words || []).forEach((w, i) => { if (w) HISTORY.set(i, String(w).toLowerCase()); });
+      (j.words || []).forEach((w, i) => { if (w && isPast(i)) HISTORY.set(i, String(w).toLowerCase()); });
       if (HISTORY.size) histSource = 'file';
     }
   } catch (e) { /* file absent — fine */ }
-  for (const [k, v] of Object.entries(LS.get('ws_extra', {}))) HISTORY.set(+k, v);
+  for (const [k, v] of Object.entries(LS.get('ws_extra', {}))) if (isPast(+k)) HISTORY.set(+k, v);
   if (HISTORY.size && histSource === 'none') histSource = 'file';
   pushHistory();
   topUp();
@@ -67,6 +73,7 @@ async function fetchDay(n) {
 }
 
 function remember(num, word) {
+  if (!isPast(num)) return;                 // never store today's answer
   HISTORY.set(num, word);
   const extra = LS.get('ws_extra', {});
   extra[num] = word;
@@ -83,7 +90,7 @@ const why = e => (e && e.message ? e.message : String(e)) || 'no reason given';
 /* fill in whatever the file is missing, most recent first, without hammering */
 async function topUp() {
   const missing = [];
-  for (let n = TODAYNUM; n >= 0 && missing.length < 40; n--) if (!HISTORY.has(n)) missing.push(n);
+  for (let n = TODAYNUM - 1; n >= 0 && missing.length < 40; n--) if (!HISTORY.has(n)) missing.push(n);
   if (!missing.length) { liveOk = null; renderStatus(); return; }
   let got = 0, lastErr = '';
   for (const n of missing) {
@@ -97,7 +104,11 @@ async function topUp() {
     await new Promise(r => setTimeout(r, 120));
   }
   if (got) { histSource = 'live'; pushHistory(); }
-  if (!got && lastErr) histMsg = 'Could not reach the New York Times from this browser (' + lastErr + ').';
+  // Only worth mentioning if the archive is actually short. A one-day gap in
+  // the small hours, before the daily task has run, is normal — stay quiet.
+  if (!got && lastErr && (!HISTORY.size || missing.length > 3)) {
+    histMsg = 'Could not reach the New York Times from this browser (' + lastErr + ').';
+  }
   renderStatus();
 }
 
@@ -107,7 +118,7 @@ async function backfill() {
   if (backfilling) return;
   backfilling = true;
   const missing = [];
-  for (let n = TODAYNUM; n >= 0; n--) if (!HISTORY.has(n)) missing.push(n);
+  for (let n = TODAYNUM - 1; n >= 0; n--) if (!HISTORY.has(n)) missing.push(n);
   let got = 0, failed = 0, lastErr = '', tick = 0;
   setMsg('Starting… 0 of ' + nf(missing.length) + ' days. Keep this screen open.');
   for (const n of missing) {
@@ -327,7 +338,7 @@ function renderStatus() {
   if (histMsg) box.appendChild(el('div', 'histmsg' + (/refused|not reach/.test(histMsg) ? ' bad' : ''), histMsg));
 
   // Offer a direct backfill whenever the archive is materially incomplete.
-  const gaps = (TODAYNUM + 1) - HISTORY.size;
+  const gaps = TODAYNUM - HISTORY.size;
   if (gaps > 30 && !backfilling) {
     const b = el('button', 'ghost',
       HISTORY.size ? 'Fetch the missing ' + nf(gaps) + ' days from the NYT' : 'Fetch history from the NYT now');
