@@ -54,6 +54,10 @@ jobs:
           const DAY = 86400000;
           const iso = n => new Date(LAUNCH + n * DAY).toISOString().slice(0, 10);
           const todayNum = Math.floor((Date.now() - LAUNCH) / DAY);
+          // Stop at yesterday. Today's answer must not land in a public file that a
+          // solver reads: it would both spoil the puzzle and make the solver treat the
+          // correct word as "already used" and rule it out.
+          const lastNum = todayNum - 1;
 
           const BACKFILL = process.argv.includes('--backfill');
           const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -88,9 +92,9 @@ jobs:
 
           const missing = [];
           const from = BACKFILL ? 0 : Math.max(0, words.length - 3);
-          for (let n = from; n <= todayNum; n++) if (!words[n]) missing.push(n);
+          for (let n = from; n <= lastNum; n++) if (!words[n]) missing.push(n);
 
-          console.log(`today = puzzle #${todayNum} (${iso(todayNum)}); ${missing.length} day(s) to fetch`);
+          console.log(`today = puzzle #${todayNum} (${iso(todayNum)}); collecting up to #${lastNum}; ${missing.length} day(s) to fetch`);
 
           let got = 0, miss = 0, consecutiveFailures = 0;
           for (const n of missing) {
@@ -105,6 +109,7 @@ jobs:
             }
             if (!res) { miss++; continue; }
             const [num, w] = res;
+            if (num > lastNum) continue;              // never record today
             while (words.length <= num) words.push(null);
             words[num] = w;
             got++;
@@ -112,14 +117,15 @@ jobs:
             await sleep(BACKFILL ? 120 : 250);
           }
 
-          while (words.length <= todayNum) words.push(null);
+          while (words.length <= lastNum) words.push(null);
+          words.length = lastNum + 1;
           const known = words.filter(Boolean).length;
 
           data = {
             note: data.note || 'Wordle answers by puzzle number; index 0 = 2021-06-19 (puzzle #0).',
             start: '2021-06-19',
             updated: new Date().toISOString().slice(0, 10),
-            latest_puzzle: todayNum,
+            latest_puzzle: lastNum,
             known,
             words
           };
