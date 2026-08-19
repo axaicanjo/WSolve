@@ -73,44 +73,58 @@ function remember(num, word) {
   LS.set('ws_extra', extra);
 }
 
+/* A short line of plain-English status, shown in the history panel. It lives in
+   a variable rather than on the button, because renderStatus() rebuilds the
+   panel from scratch and would otherwise wipe whatever the button was saying. */
+let histMsg = '';
+function setMsg(m) { histMsg = m; renderStatus(); }
+const why = e => (e && e.message ? e.message : String(e)) || 'no reason given';
+
 /* fill in whatever the file is missing, most recent first, without hammering */
 async function topUp() {
   const missing = [];
   for (let n = TODAYNUM; n >= 0 && missing.length < 40; n--) if (!HISTORY.has(n)) missing.push(n);
   if (!missing.length) { liveOk = null; renderStatus(); return; }
-  let got = 0;
+  let got = 0, lastErr = '';
   for (const n of missing) {
     try {
       const [num, w] = await fetchDay(n);
       remember(num, w); got++; liveOk = true;
     } catch (e) {
+      lastErr = why(e);
       if (got === 0) { liveOk = false; break; }   // blocked or offline — stop trying
     }
     await new Promise(r => setTimeout(r, 120));
   }
   if (got) { histSource = 'live'; pushHistory(); }
+  if (!got && lastErr) histMsg = 'Could not reach the New York Times from this browser (' + lastErr + ').';
   renderStatus();
 }
 
 /* full backfill straight from the NYT, for when the workflow has not run */
 let backfilling = false;
-async function backfill(btn) {
+async function backfill() {
   if (backfilling) return;
   backfilling = true;
   const missing = [];
-  for (let n = 0; n <= TODAYNUM; n++) if (!HISTORY.has(n)) missing.push(n);
-  let got = 0, failed = 0;
+  for (let n = TODAYNUM; n >= 0; n--) if (!HISTORY.has(n)) missing.push(n);
+  let got = 0, failed = 0, lastErr = '', tick = 0;
+  setMsg('Starting… 0 of ' + nf(missing.length) + ' days. Keep this screen open.');
   for (const n of missing) {
     try { const [num, w] = await fetchDay(n); remember(num, w); got++; failed = 0; }
-    catch (e) { failed++; if (failed >= 5) break; }
-    if (got % 25 === 0) btn.textContent = 'Fetching… ' + got + ' / ' + missing.length;
-    await new Promise(r => setTimeout(r, 60));
+    catch (e) { failed++; lastErr = why(e); if (failed >= 5) break; }
+    if (++tick % 20 === 0) {
+      histMsg = 'Fetching… ' + nf(got) + ' of ' + nf(missing.length) + ' days. Keep this screen open.';
+      renderStatus();
+    }
+    await new Promise(r => setTimeout(r, 50));
   }
   backfilling = false;
   liveOk = got > 0;
   if (got) { histSource = 'live'; pushHistory(); }
-  btn.textContent = got ? 'Fetched ' + got + ' days' : 'Blocked by the NYT — use the workflow';
-  renderStatus();
+  setMsg(got
+    ? 'Done — fetched ' + nf(got) + ' days of answers.'
+    : 'The New York Times refused the request (' + lastErr + '). This browser is not allowed to ask it directly, so the history has to be built by the daily task on GitHub instead.');
   if (got) compute();
 }
 
@@ -271,9 +285,7 @@ function renderStatus() {
   lab.appendChild(el('span', 'histttl', 'Use Historic Info'));
   const sub = el('span', 'histsub');
   if (!HISTORY.size) {
-    sub.textContent = liveOk === false
-      ? 'No answer history yet — the NYT blocked the direct fetch. Run the GitHub workflow to build past.json.'
-      : 'No answer history loaded yet.';
+    sub.textContent = 'No list of past answers loaded yet, so this is switched off.';
   } else {
     const known = HISTORY.size;
     let newest = -1; for (const n of HISTORY.keys()) if (n > newest) newest = n;
@@ -312,12 +324,14 @@ function renderStatus() {
       'Observed rate since the NYT began recycling answers on 2 Feb 2026 is about 3%. Words used within the last year are treated as unavailable; older ones are weighted by age.'));
   }
 
+  if (histMsg) box.appendChild(el('div', 'histmsg' + (/refused|not reach/.test(histMsg) ? ' bad' : ''), histMsg));
+
   // Offer a direct backfill whenever the archive is materially incomplete.
   const gaps = (TODAYNUM + 1) - HISTORY.size;
   if (gaps > 30 && !backfilling) {
     const b = el('button', 'ghost',
       HISTORY.size ? 'Fetch the missing ' + nf(gaps) + ' days from the NYT' : 'Fetch history from the NYT now');
-    b.onclick = () => { b.textContent = 'Fetching…'; backfill(b); };
+    b.onclick = () => { setMsg('Starting…'); backfill(); };
     box.appendChild(b);
   }
 }
