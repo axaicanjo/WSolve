@@ -83,24 +83,71 @@ function filter(history) {
 
 const LOG2 = Math.log(2);
 
-function rank(cand, limit) {
+/* ---------- historic-answer weighting ----------
+   LASTUSED[i] = puzzle number of the most recent time word i was the answer,
+   or -1 if it has never been an answer. TODAYNUM = today's puzzle number.
+
+   With "Use Historic Info" off every candidate is equally likely, which
+   reproduces the plain solver exactly. With it on:
+     - never-used words share (1 - RHO) of the probability, evenly;
+     - previously-used words share RHO, in proportion to how long ago they
+       were used, counting mainly the age beyond COOLDOWN days.
+   RHO defaults to the observed repeat rate since the NYT began recycling
+   answers on 2 Feb 2026; COOLDOWN reflects that no repeat so far has come
+   back sooner than about a year and a half. Inside the cooldown a word keeps
+   a small residual weight (TAIL) rather than dropping to exactly zero — the
+   cooldown is an inference from a handful of repeats, not a published rule. */
+let LASTUSED = null;
+let TODAYNUM = -1;
+const COOLDOWN = 365;
+const TAIL = 0.05;
+const ageWeight = a => Math.max(0, a - COOLDOWN) + TAIL * Math.min(a, COOLDOWN);
+
+function weightsFor(cand, useHist, rho) {
   const n = cand.length;
-  const bins = new Int32Array(243);
+  const w = new Float64Array(n);
+  if (!useHist || !LASTUSED || TODAYNUM < 0) { w.fill(1 / n); return w; }
+  let nNew = 0, sumRaw = 0;
+  const raw = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const lu = LASTUSED[cand[i]];
+    if (lu < 0) { nNew++; raw[i] = -1; }
+    else { const r = ageWeight(TODAYNUM - lu); raw[i] = r; sumRaw += r; }
+  }
+  const nUsed = n - nNew;
+  if (nUsed === 0 || sumRaw === 0) {
+    // nothing recyclable left: spread everything over the never-used words
+    if (nNew === 0) { w.fill(1 / n); return w; }
+    for (let i = 0; i < n; i++) w[i] = raw[i] < 0 ? 1 / nNew : 0;
+    return w;
+  }
+  if (nNew === 0) {
+    for (let i = 0; i < n; i++) w[i] = raw[i] / sumRaw;
+    return w;
+  }
+  const pNew = (1 - rho) / nNew;
+  for (let i = 0; i < n; i++) w[i] = raw[i] < 0 ? pNew : rho * raw[i] / sumRaw;
+  return w;
+}
+
+function rank(cand, limit, w) {
+  const n = cand.length;
+  const bins = new Float64Array(243);
+  const cnts = new Int32Array(243);
   const candSet = new Uint8Array(N);
   for (let i = 0; i < n; i++) candSet[cand[i]] = 1;
   const res = [];
   for (let g = 0; g < N; g++) {
-    bins.fill(0);
+    bins.fill(0); cnts.fill(0);
     const base = g * N;
-    for (let i = 0; i < n; i++) bins[MAT[base + cand[i]]]++;
+    for (let i = 0; i < n; i++) { const p = MAT[base + cand[i]]; bins[p] += w[i]; cnts[p]++; }
     let H = 0, exp = 0, worst = 0;
     for (let p = 0; p < 243; p++) {
-      const c = bins[p];
-      if (c === 0) continue;
-      const q = c / n;
+      const q = bins[p];
+      if (q <= 0) continue;
       H -= q * (Math.log(q) / LOG2);
-      exp += q * c;
-      if (c > worst) worst = c;
+      exp += q * cnts[p];
+      if (cnts[p] > worst) worst = cnts[p];
     }
     res.push({ i: g, H: H, exp: exp, worst: worst, isCand: candSet[g] === 1 });
   }
@@ -111,6 +158,17 @@ function rank(cand, limit) {
   }));
 }
 
+/* never-used first (alphabetical), then previously-used oldest use first */
+function orderIdx(list) {
+  return list.slice().sort((a, b) => {
+    const la = LASTUSED ? LASTUSED[a] : -1, lb = LASTUSED ? LASTUSED[b] : -1;
+    if (la < 0 && lb < 0) return a - b;          // both new — words are stored alphabetically
+    if (la < 0) return -1;
+    if (lb < 0) return 1;
+    return la - lb || a - b;                     // oldest use first
+  });
+}
+
 function groupsFor(word, cand) {
   const gi = IDX.has(word) ? IDX.get(word) : -1;
   const map = new Map();
@@ -119,10 +177,17 @@ function groupsFor(word, cand) {
     const p = gi >= 0 ? MAT[gi * N + s] : patStr(word, s);
     let a = map.get(p);
     if (!a) { a = []; map.set(p, a); }
-    a.push(W[s]);
+    a.push(s);
   }
   const out = [];
-  for (const [p, arr] of map) out.push({ pattern: decode(p), code: p, words: arr });
+  for (const [p, arr] of map) {
+    const ord = orderIdx(arr);
+    out.push({
+      pattern: decode(p), code: p,
+      words: ord.map(i => W[i]),
+      lastUsed: ord.map(i => (LASTUSED ? LASTUSED[i] : -1))
+    });
+  }
   out.sort((a, b) => b.words.length - a.words.length);
   return out;
 }
@@ -140,17 +205,41 @@ onmessage = (e) => {
     postMessage({ type: 'ready', n: N });
     return;
   }
+  if (m.type === 'history') {
+    LASTUSED = new Int32Array(N).fill(-1);
+    TODAYNUM = m.todayNum;
+    let hits = 0;
+    for (const [word, num] of m.pairs) {
+      const i = IDX.get(word);
+      if (i === undefined) continue;                 // answer outside our 2,458-word list
+      if (num > LASTUSED[i]) { if (LASTUSED[i] < 0) hits++; LASTUSED[i] = num; }
+    }
+    postMessage({ type: 'historyOk', matched: hits });
+    return;
+  }
   if (m.type === 'compute') {
     const cand = filter(m.history);
-    const words = [];
-    for (let i = 0; i < cand.length; i++) words.push(W[cand[i]]);
-    let suggestions = [], groups = [], pick = null;
+    let suggestions = [], groups = [], pick = null, words = [], lastUsed = [], probs = [];
     if (cand.length > 0) {
-      suggestions = rank(cand, 10);
+      const w = weightsFor(cand, m.useHist, m.rho);
+      suggestions = rank(cand, 10, w);
       pick = m.focus && suggestions.some(s => s.word === m.focus) ? m.focus : suggestions[0].word;
       groups = groupsFor(pick, cand);
+      // probabilities always reflect the historic model, whether or not it drives ranking
+      const pw = weightsFor(cand, true, m.rho);
+      const pos = new Map();
+      for (let i = 0; i < cand.length; i++) pos.set(cand[i], i);
+      const ord = orderIdx(Array.from(cand));
+      for (const i of ord) {
+        words.push(W[i]);
+        lastUsed.push(LASTUSED ? LASTUSED[i] : -1);
+        probs.push(pw[pos.get(i)]);
+      }
     }
-    postMessage({ type: 'result', count: cand.length, words, suggestions, groups, pick, token: m.token });
+    postMessage({
+      type: 'result', count: cand.length, words, lastUsed, probs,
+      suggestions, groups, pick, token: m.token
+    });
     return;
   }
   if (m.type === 'groups') {

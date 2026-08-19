@@ -149,6 +149,33 @@ button.ghost{
 #boot .track i{display:block;height:100%;width:0;background:var(--green);transition:width .15s}
 .solvedbtn{margin:2px 0 4px;background:none;border:1.5px solid var(--green);color:#7ec06f;padding:11px}
 .solvedbtn:active{background:#1e2b1c}
+
+#hist{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:10px 0;background:#171718}
+.histrow{display:flex;align-items:center;gap:12px}
+.histlab{flex:1;min-width:0}
+.histttl{display:block;font-size:13px;font-weight:700}
+.histsub{display:block;font-size:11px;color:var(--dim);line-height:1.45;margin-top:2px}
+.switch{width:46px;height:27px;border-radius:999px;background:#3a3a3c;border:none;padding:0;
+  position:relative;flex:0 0 auto;cursor:pointer;transition:background .15s}
+.switch i{position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;
+  background:#e9e9e9;transition:transform .15s;display:block}
+.switch.on{background:var(--green)}
+.switch.on i{transform:translateX(19px)}
+.switch.off{opacity:.4}
+.sliderow{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+.slab{font-size:11px;color:var(--dim);flex:1}
+.sval{font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+.sliderow input[type=range]{width:100%;accent-color:var(--green);height:22px}
+.histnote{font-size:11px;color:var(--dim);line-height:1.5;margin-top:6px}
+#hist .ghost{margin-top:10px}
+.seg{font-size:11px;color:var(--dim);margin:12px 0 0;padding-top:9px;border-top:1px solid #2b2b2d;
+  text-transform:uppercase;letter-spacing:.06em;font-weight:700}
+.w{display:inline-flex;flex-direction:column;align-items:flex-start;gap:1px;line-height:1.15}
+.w b{font-size:13px;font-weight:700;letter-spacing:.04em}
+.w u{text-decoration:none;font-size:9px;color:var(--dim);font-variant-numeric:tabular-nums;letter-spacing:.01em}
+.w.used{background:#332d22;border-color:#5a4a2c}
+.w.used u{color:#c9ac68}
+.w.more{justify-content:center;color:var(--dim)}
 </style>
 </head>
 <body>
@@ -163,6 +190,7 @@ button.ghost{
 
 <main id="main">
   <div id="board"></div>
+  <div id="hist"></div>
   <div class="hint" id="hint"></div>
   <div id="out"></div>
 </main>

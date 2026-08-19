@@ -1,0 +1,6 @@
+{
+  "note": "Wordle answers by puzzle number; index 0 = 2021-06-19. Populated by .github/workflows/wordle-history.yml or by the in-app 'Fetch history from the NYT now' button.",
+  "start": "2021-06-19",
+  "updated": null,
+  "words": []
+}
