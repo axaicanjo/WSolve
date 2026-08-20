@@ -1,0 +1,93 @@
+/* Builds/updates past.json — the dated archive of Wordle answers.
+ *
+ *   node scripts/update-history.mjs            # fill in anything missing (fast after the first run)
+ *   node scripts/update-history.mjs --backfill # walk every date since launch
+ *
+ * Source: the NYT's own puzzle endpoint, https://www.nytimes.com/svc/wordle/v2/YYYY-MM-DD.json,
+ * which returns { print_date, days_since_launch, solution, ... } for any past or present date.
+ * Index in `words` is the puzzle number, i.e. days since 19 Jun 2021 (puzzle #0 = CIGAR).
+ */
+import { readFile, writeFile } from 'node:fs/promises';
+
+const FILE = new URL('../past.json', import.meta.url);
+const LAUNCH = Date.UTC(2021, 5, 19);
+const DAY = 86400000;
+const iso = n => new Date(LAUNCH + n * DAY).toISOString().slice(0, 10);
+const todayNum = Math.floor((Date.now() - LAUNCH) / DAY);
+// Stop at yesterday. Today's answer must not land in a public file that a
+// solver reads: it would both spoil the puzzle and make the solver treat the
+// correct word as "already used" and rule it out.
+const lastNum = todayNum - 1;
+
+const BACKFILL = process.argv.includes('--backfill');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function fetchDay(n, tries = 3) {
+  for (let t = 0; t < tries; t++) {
+    try {
+      const r = await fetch(`https://www.nytimes.com/svc/wordle/v2/${iso(n)}.json`, {
+        headers: { 'user-agent': 'wordle-solver-history/1.0', accept: 'application/json' }
+      });
+      if (r.status === 404) return null;
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      const w = String(j.solution ?? j.answer ?? '').toLowerCase();
+      if (!/^[a-z]{5}$/.test(w)) throw new Error('unexpected payload: ' + JSON.stringify(j).slice(0, 120));
+      const num = Number.isInteger(j.days_since_launch) ? j.days_since_launch : n;
+      return [num, w];
+    } catch (e) {
+      if (t === tries - 1) throw e;
+      await sleep(1500 * (t + 1));
+    }
+  }
+}
+
+let data;
+try {
+  data = JSON.parse(await readFile(FILE, 'utf8'));
+} catch {
+  data = { start: '2021-06-19', updated: null, words: [] };
+}
+const words = data.words || [];
+
+const missing = [];
+const from = BACKFILL ? 0 : Math.max(0, words.length - 3);
+for (let n = from; n <= lastNum; n++) if (!words[n]) missing.push(n);
+
+console.log(`today = puzzle #${todayNum} (${iso(todayNum)}); collecting up to #${lastNum}; ${missing.length} day(s) to fetch`);
+
+let got = 0, miss = 0, consecutiveFailures = 0;
+for (const n of missing) {
+  let res;
+  try {
+    res = await fetchDay(n);
+    consecutiveFailures = 0;
+  } catch (e) {
+    console.error(`  ${iso(n)}: ${e.message}`);
+    if (++consecutiveFailures >= 8) { console.error('too many consecutive failures — stopping'); break; }
+    continue;
+  }
+  if (!res) { miss++; continue; }
+  const [num, w] = res;
+  if (num > lastNum) continue;              // never record today
+  while (words.length <= num) words.push(null);
+  words[num] = w;
+  got++;
+  if (got % 100 === 0) console.log(`  …${got} fetched`);
+  await sleep(BACKFILL ? 120 : 250);
+}
+
+while (words.length <= lastNum) words.push(null);
+words.length = lastNum + 1;
+const known = words.filter(Boolean).length;
+
+data = {
+  note: data.note || 'Wordle answers by puzzle number; index 0 = 2021-06-19 (puzzle #0).',
+  start: '2021-06-19',
+  updated: new Date().toISOString().slice(0, 10),
+  latest_puzzle: lastNum,
+  known,
+  words
+};
+await writeFile(FILE, JSON.stringify(data) + '\n');
+console.log(`fetched ${got}, no data for ${miss}; past.json now holds ${known} answers`);

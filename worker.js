@@ -211,7 +211,7 @@ onmessage = (e) => {
     let hits = 0;
     for (const [word, num] of m.pairs) {
       const i = IDX.get(word);
-      if (i === undefined) continue;                 // answer outside our 2,458-word list
+      if (i === undefined) continue;                 // answer outside our 2,486-word list
       if (num > LASTUSED[i]) { if (LASTUSED[i] < 0) hits++; LASTUSED[i] = num; }
     }
     postMessage({ type: 'historyOk', matched: hits });

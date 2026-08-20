@@ -87,28 +87,27 @@ let histMsg = '';
 function setMsg(m) { histMsg = m; renderStatus(); }
 const why = e => (e && e.message ? e.message : String(e)) || 'no reason given';
 
-/* fill in whatever the file is missing, most recent first, without hammering */
+/* Opportunistically fill any gap the file has, most recent first, without
+   hammering. past.json is the real source — the daily GitHub task keeps it
+   current — so this is a bonus, not a requirement. The NYT endpoint sends no
+   CORS headers, so from a browser it normally fails; that is expected and
+   deliberately silent. If the archive really is behind, the subtitle already
+   says so ("N days behind"), which is the honest signal. */
 async function topUp() {
   const missing = [];
   for (let n = TODAYNUM - 1; n >= 0 && missing.length < 40; n--) if (!HISTORY.has(n)) missing.push(n);
   if (!missing.length) { liveOk = null; renderStatus(); return; }
-  let got = 0, lastErr = '';
+  let got = 0;
   for (const n of missing) {
     try {
       const [num, w] = await fetchDay(n);
       remember(num, w); got++; liveOk = true;
     } catch (e) {
-      lastErr = why(e);
       if (got === 0) { liveOk = false; break; }   // blocked or offline — stop trying
     }
     await new Promise(r => setTimeout(r, 120));
   }
   if (got) { histSource = 'live'; pushHistory(); }
-  // Only worth mentioning if the archive is actually short. A one-day gap in
-  // the small hours, before the daily task has run, is normal — stay quiet.
-  if (!got && lastErr && (!HISTORY.size || missing.length > 3)) {
-    histMsg = 'Could not reach the New York Times from this browser (' + lastErr + ').';
-  }
   renderStatus();
 }
 
@@ -387,7 +386,7 @@ function render() {
     const p = el('div', 'panel');
     p.appendChild(el('h2', null, 'No matches'));
     p.appendChild(el('div', 'big err', 'Nothing fits'));
-    p.appendChild(el('div', 'sub', 'No word in the 2,458-word list matches every clue you entered. Most likely a tile colour is wrong, or the real answer is not in this list. Tap Undo to change the last guess.'));
+    p.appendChild(el('div', 'sub', 'No word in the 2,486-word list matches every clue you entered. Most likely a tile colour is wrong, or the real answer is not in this list. Tap Undo to change the last guess.'));
     outEl.appendChild(p);
     return;
   }
