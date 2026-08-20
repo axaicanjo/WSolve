@@ -158,10 +158,20 @@ function rank(cand, limit, w) {
   }));
 }
 
-/* never-used first (alphabetical), then previously-used oldest use first */
-function orderIdx(list) {
-  return list.slice().sort((a, b) => {
-    const la = LASTUSED ? LASTUSED[a] : -1, lb = LASTUSED ? LASTUSED[b] : -1;
+/* With the historic model ON: never-used first (alphabetical), then
+   previously-used, oldest use first.
+
+   With it OFF: plain alphabetical, and every word reported as never used.
+   The toggle has to make the distinction disappear completely — ordering and
+   per-word dates included — not just stop it driving the ranking. Anything
+   that leaks "this word has been an answer before" is the toggle not working.
+   `cand` is already ascending and W is stored alphabetically, so index order
+   is alphabetical order. */
+function orderIdx(list, showHist) {
+  const a2 = list.slice();
+  if (!showHist || !LASTUSED) return a2.sort((a, b) => a - b);
+  return a2.sort((a, b) => {
+    const la = LASTUSED[a], lb = LASTUSED[b];
     if (la < 0 && lb < 0) return a - b;          // both new — words are stored alphabetically
     if (la < 0) return -1;
     if (lb < 0) return 1;
@@ -169,7 +179,9 @@ function orderIdx(list) {
   });
 }
 
-function groupsFor(word, cand) {
+const lastUsedFor = (i, showHist) => (showHist && LASTUSED ? LASTUSED[i] : -1);
+
+function groupsFor(word, cand, showHist) {
   const gi = IDX.has(word) ? IDX.get(word) : -1;
   const map = new Map();
   for (let i = 0; i < cand.length; i++) {
@@ -181,11 +193,11 @@ function groupsFor(word, cand) {
   }
   const out = [];
   for (const [p, arr] of map) {
-    const ord = orderIdx(arr);
+    const ord = orderIdx(arr, showHist);
     out.push({
       pattern: decode(p), code: p,
       words: ord.map(i => W[i]),
-      lastUsed: ord.map(i => (LASTUSED ? LASTUSED[i] : -1))
+      lastUsed: ord.map(i => lastUsedFor(i, showHist))
     });
   }
   out.sort((a, b) => b.words.length - a.words.length);
@@ -220,20 +232,22 @@ onmessage = (e) => {
   if (m.type === 'compute') {
     const cand = filter(m.history);
     let suggestions = [], groups = [], pick = null, words = [], lastUsed = [], probs = [];
+    const showHist = !!m.useHist;
     if (cand.length > 0) {
-      const w = weightsFor(cand, m.useHist, m.rho);
+      const w = weightsFor(cand, showHist, m.rho);
       suggestions = rank(cand, 10, w);
       pick = m.focus && suggestions.some(s => s.word === m.focus) ? m.focus : suggestions[0].word;
-      groups = groupsFor(pick, cand);
-      // probabilities always reflect the historic model, whether or not it drives ranking
-      const pw = weightsFor(cand, true, m.rho);
+      groups = groupsFor(pick, cand, showHist);
+      // Probabilities are part of the historic model, so they go with it. With
+      // the toggle off every word is equally likely and there is nothing to say.
+      const pw = showHist ? weightsFor(cand, true, m.rho) : null;
       const pos = new Map();
       for (let i = 0; i < cand.length; i++) pos.set(cand[i], i);
-      const ord = orderIdx(Array.from(cand));
+      const ord = orderIdx(Array.from(cand), showHist);
       for (const i of ord) {
         words.push(W[i]);
-        lastUsed.push(LASTUSED ? LASTUSED[i] : -1);
-        probs.push(pw[pos.get(i)]);
+        lastUsed.push(lastUsedFor(i, showHist));
+        probs.push(pw ? pw[pos.get(i)] : null);
       }
     }
     postMessage({
@@ -244,6 +258,6 @@ onmessage = (e) => {
   }
   if (m.type === 'groups') {
     const cand = filter(m.history);
-    postMessage({ type: 'groupsOnly', pick: m.word, groups: groupsFor(m.word, cand), token: m.token });
+    postMessage({ type: 'groupsOnly', pick: m.word, groups: groupsFor(m.word, cand, !!m.useHist), token: m.token });
   }
 };

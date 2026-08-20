@@ -173,7 +173,7 @@ function compute() {
 function regroup(word) {
   if (!ready || busy) return;
   busy = true; token++;
-  worker.postMessage({ type: 'groups', history: HIST, word, token });
+  worker.postMessage({ type: 'groups', history: HIST, word, useHist, token });
 }
 
 /* ---------- helpers ---------- */
@@ -398,19 +398,21 @@ function render() {
 
   let split = last.words.length;
   for (let i = 0; i < last.lastUsed.length; i++) if (last.lastUsed[i] >= 0) { split = i; break; }
-  const haveHist = HISTORY.size > 0;
+  /* Switching Use Historic Info off has to remove the distinction entirely —
+     no two sections, no dates on the chips, no probabilities. The worker
+     already returns a plain alphabetical pool with lastUsed all -1 in that
+     case; this just picks the matching presentation. */
+  const showHist = useHist && HISTORY.size > 0;
   const nNew = split, nUsed = last.words.length - split;
   let pNew = 0; for (let i = 0; i < split; i++) pNew += last.probs[i];
 
   p1.appendChild(el('div', 'sub', last.count === 1
     ? 'Only one word fits — that is the answer.'
-    : (haveHist
-      ? 'Never-used words first, then previous answers oldest to most recent. Percentages are each word’s chance of being today’s answer' +
-        (useHist ? '. ' : ' — shown for reference only, since Use Historic Info is off and the ranking below treats every word as equally likely. ') +
-        'Tap a word to load it as your next guess.'
-      : 'Words still consistent with every clue. Tap a word to load it as your next guess.')));
+    : (showHist
+      ? 'Never-used words first, then previous answers oldest to most recent. Percentages are each word’s chance of being today’s answer. Tap a word to load it as your next guess.'
+      : 'Words still consistent with every clue, alphabetically. Tap a word to load it as your next guess.')));
 
-  if (!haveHist) {
+  if (!showHist) {
     const wrap = el('div', 'wordwrap');
     chipBlock(wrap, last.words, null, null, 240);
     p1.appendChild(wrap);
@@ -477,7 +479,7 @@ function render() {
       head.appendChild(el('span', 'caret', '▾'));
       const body = el('div', 'grpbody');
       const bw = el('div', 'wordwrap');
-      chipBlock(bw, g.words, haveHist ? g.lastUsed : null, null, 120);
+      chipBlock(bw, g.words, useHist && HISTORY.size ? g.lastUsed : null, null, 120);
       body.appendChild(bw);
       head.onclick = () => box.classList.toggle('open');
       box.appendChild(head); box.appendChild(body);
