@@ -1,7 +1,7 @@
 # Wordle Solver
 
 An offline-capable web app (PWA) that solves Wordle against the **Expanded Wordle Solution List** —
-the 2,315 original answers plus the 171 curated additions (2,486 words total).
+the 2,315 original answers plus 174 curated additions (2,489 words total).
 
 Install it on an iPhone home screen and it runs fullscreen, with no browser chrome and no network.
 
@@ -18,8 +18,8 @@ Install it on an iPhone home screen and it runs fullscreen, with no browser chro
 
 **Undo** removes the last guess (or clears the row you're typing). **New** starts a fresh puzzle.
 
-Words with a green outline are the 171 added candidates — words that were never official
-Wordle answers.
+Words with a green outline are the 174 added candidates — words that were never official
+Wordle answers. CAPON, TWEEN and INTEL were added on 1 Sep 2026.
 
 ## Answer history and "Use Historic Info"
 
@@ -117,7 +117,7 @@ refreshes cached files in the background. To force it, bump `CACHE` in `sw.js`.
 | `index.html` | Markup and styles |
 | `app.js` | UI: board, keyboard, panels |
 | `worker.js` | Solver in a Web Worker — pattern matrix, filtering, entropy ranking |
-| `words.js` | The 2,486-word list (concatenated, 5 chars each) + indices of the 171 added words |
+| `words.js` | The 2,489-word list (concatenated, 5 chars each) + indices of the 174 added words |
 | `past.json` | Dated archive of Wordle answers, one per puzzle number |
 | `.github/workflows/wordle-history.yml` | Self-contained daily task that rewrites `past.json`; `backfill` input seeds it |
 | `scripts/update-history.mjs` | The same script as a standalone file, if you'd rather run it by hand |
@@ -126,13 +126,13 @@ refreshes cached files in the background. To force it, bump `CACHE` in `sw.js`.
 
 ## How the solver works
 
-On load, the worker precomputes the full 2,486 × 2,486 feedback matrix (~6 MB) — every possible
+On load, the worker precomputes the full 2,489 × 2,489 feedback matrix (~6 MB) — every possible
 guess against every possible answer, encoded as one of 243 colour patterns. Duplicate letters are
 scored exactly as the real game does: greens claim their letter first, then yellows consume the
 remaining copies left to right.
 
 After each clue, the candidate set is filtered to words that would have produced the exact pattern
-you entered. Every one of the 2,486 words is then scored by the Shannon entropy of the partition
+you entered. Every one of the 2,489 words is then scored by the Shannon entropy of the partition
 it induces on the remaining candidates; ties go to a word that could itself be the answer.
 
 Measured over 300 simulated games starting from RAISE: **3.51 guesses on average, worst case 5,
