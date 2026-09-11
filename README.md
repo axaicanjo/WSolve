@@ -19,6 +19,27 @@ Install it on an iPhone home screen and it runs fullscreen, with no browser chro
 
 **Undo** removes the last guess (or clears the row you're typing). **New** starts a fresh puzzle.
 
+## Weighing up your own guess
+
+The ten suggestions are only the head of a ranking that covers every word in the list, so any
+word can be given the same treatment.
+
+- **Press and hold** any word — in the possible-solutions list, or inside an outcome group — to
+  analyse it instead of playing it. A plain tap still just plays it.
+- **Or simply type it in.** As soon as the row holds five letters the analysis appears, before
+  you commit to it. This works for words that cannot be the answer, which is how you evaluate a
+  pure probe guess.
+
+The chosen word is pinned at the top of the *Best next guess* list, marked **YOURS**, carrying the
+same figures as the suggestions — bits, expected words remaining, worst case — plus the thing the
+suggestions cannot tell you: **where it ranks out of all 2,383 words**. That is the real cost of
+playing a hunch. "Ranks 28 of 2,383" is a fine guess; "ranks 1,350" means you are giving up a lot.
+If your pick is already in the top ten its existing row highlights rather than being duplicated,
+and the outcome-groups panel below always follows whichever word is selected.
+
+The pin clears itself when you submit a guess, and a typed pin clears when you delete a letter.
+
+
 Words with a green outline are the 68 candidates that were never official Wordle answers.
 
 The word.tips list filters out coarse words, so it was missing eight that *have* been Wordle

@@ -13,6 +13,8 @@ let input = '';          // letters typed in the active row
 let marks = [0, 0, 0, 0, 0];
 let last = null;         // last worker result
 let focusWord = null;    // which suggestion the groups panel is showing
+let pinned = null;       // {word, stats, groups} for a word the user chose to analyse
+let typedPin = false;    // true when `pinned` came from the row being typed, not a long-press
 let token = 0, busy = false, ready = false;
 
 /* ---------- settings ---------- */
@@ -162,13 +164,28 @@ worker.onmessage = (e) => {
   busy = false;
   if (m.type === 'result') { last = m; focusWord = m.pick; render(); }
   if (m.type === 'groupsOnly') { last.groups = m.groups; focusWord = m.pick; render(); }
+  if (m.type === 'analysis') {
+    if (!last) return;
+    pinned = m; focusWord = m.word;
+    if (m.groups && m.groups.length) last.groups = m.groups;
+    render();
+  }
 };
 
 function compute() {
   if (!ready) return;
+  pinned = null; typedPin = false;
   busy = true; token++;
   cntEl.textContent = 'working…';
   worker.postMessage({ type: 'compute', history: HIST, focus: null, useHist, rho, token });
+}
+/* Score an arbitrary word against the current candidates. Not gated on `busy`:
+   a long-press should never be swallowed because a compute is in flight — the
+   token check already discards whatever comes back out of order. */
+function analyse(word) {
+  if (!ready || !last || !last.count) return;
+  token++;
+  worker.postMessage({ type: 'analyse', history: HIST, word, useHist, rho, token });
 }
 function regroup(word) {
   if (!ready || busy) return;
@@ -217,6 +234,18 @@ function renderBoard() {
   hintEl.textContent = input.length < 5
     ? 'Type your guess, then tap each letter to set its colour.'
     : 'Tap letters: grey → yellow → green. Then press ENTER.';
+  maybeAnalyseTyped();
+}
+
+/* A full row of letters is itself a question — "what would this guess do?" — so
+   answer it without being asked. Clearing letters drops the pin again, but only
+   if typing is what put it there; a long-pressed word stays put. */
+function maybeAnalyseTyped() {
+  if (input.length === 5) {
+    if (!pinned || pinned.word !== input) { typedPin = true; analyse(input); }
+  } else if (typedPin) {
+    typedPin = false; pinned = null; render();
+  }
 }
 
 /* ---------- keyboard ---------- */
@@ -348,7 +377,9 @@ function renderStatus() {
 
 /* ---------- output ---------- */
 function chip(w, lu, p) {
-  const c = el('span', 'w tap' + (ADDED.has(w) ? ' added' : '') + (lu >= 0 ? ' used' : ''));
+  const c = el('span', 'w tap' + (ADDED.has(w) ? ' added' : '') + (lu >= 0 ? ' used' : '')
+                      + (pinned && pinned.word === w ? ' picked' : ''));
+  c.dataset.w = w;
   c.appendChild(el('b', null, w));
   const meta = el('u', null, lu >= 0 ? fmtDate(lu) : (p != null ? pct(p) : ''));
   if (lu >= 0 && p != null) meta.textContent = fmtDate(lu) + ' · ' + pct(p);
@@ -370,6 +401,38 @@ function chipBlock(container, words, lus, probs, cap) {
   }
 }
 
+/* Long-press to analyse, tap to play. Delegated from the container so that
+   expanding the list to a couple of thousand chips costs nothing, and cancelled
+   by any real movement so it never fires while scrolling. */
+(function attachLongPress() {
+  const HOLD = 450, SLOP = 10;
+  let timer = null, sx = 0, sy = 0, fired = false;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  outEl.addEventListener('pointerdown', e => {
+    const c = e.target.closest('.w');
+    if (!c || c.classList.contains('more') || !c.dataset.w) return;
+    sx = e.clientX; sy = e.clientY; fired = false;
+    cancel();
+    timer = setTimeout(() => {
+      fired = true; timer = null;
+      try { navigator.vibrate && navigator.vibrate(15); } catch (_) {}
+      analyse(c.dataset.w);
+    }, HOLD);
+  });
+  outEl.addEventListener('pointermove', e => {
+    if (timer && (Math.abs(e.clientX - sx) > SLOP || Math.abs(e.clientY - sy) > SLOP)) cancel();
+  }, { passive: true });
+  outEl.addEventListener('pointerup', cancel);
+  outEl.addEventListener('pointercancel', () => { cancel(); fired = false; });
+  // Swallow the click that follows a completed long-press, before the chip sees it.
+  outEl.addEventListener('click', e => {
+    if (!fired) return;
+    fired = false;
+    if (e.target.closest('.w')) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
+  outEl.addEventListener('contextmenu', e => { if (e.target.closest('.w')) e.preventDefault(); });
+})();
+
 function render() {
   outEl.textContent = '';
   if (!last) return;
@@ -386,7 +449,7 @@ function render() {
     const p = el('div', 'panel');
     p.appendChild(el('h2', null, 'No matches'));
     p.appendChild(el('div', 'big err', 'Nothing fits'));
-    p.appendChild(el('div', 'sub', 'No word in the 2,486-word list matches every clue you entered. Most likely a tile colour is wrong, or the real answer is not in this list. Tap Undo to change the last guess.'));
+    p.appendChild(el('div', 'sub', 'No word in the ' + nf(WORDS.length) + '-word list matches every clue you entered. Most likely a tile colour is wrong, or the real answer is not in this list. Tap Undo to change the last guess.'));
     outEl.appendChild(p);
     return;
   }
@@ -409,8 +472,8 @@ function render() {
   p1.appendChild(el('div', 'sub', last.count === 1
     ? 'Only one word fits — that is the answer.'
     : (showHist
-      ? 'Never-used words first, then previous answers oldest to most recent. Percentages are each word’s chance of being today’s answer. Tap a word to load it as your next guess.'
-      : 'Words still consistent with every clue, alphabetically. Tap a word to load it as your next guess.')));
+      ? 'Never-used words first, then previous answers oldest to most recent. Percentages are each word’s chance of being today’s answer. Tap a word to play it; press and hold to weigh it up first.'
+      : 'Words still consistent with every clue, alphabetically. Tap a word to play it; press and hold to weigh it up first.')));
 
   if (!showHist) {
     const wrap = el('div', 'wordwrap');
@@ -434,18 +497,28 @@ function render() {
 
   if (last.count === 1) return;
 
-  /* suggestions */
+  /* suggestions, with the user's own pick pinned alongside them */
   const p2 = el('div', 'panel');
   p2.appendChild(el('h2', null, (HIST.length ? 'Best next guess' : 'Best opening guess') + (useHist ? ' · historic weighting on' : '')));
   const hmax = last.suggestions[0].H || 1;
-  last.suggestions.forEach((s, i) => {
-    const row = el('div', 'sug' + (i === 0 ? ' best' : ''));
-    row.appendChild(el('span', 'rank', String(i + 1)));
+
+  const sugRow = (s, label, mine) => {
+    const row = el('div', 'sug' + (label === '1' ? ' best' : '') + (mine ? ' mine' : ''));
+    const r = el('span', 'rank' + (mine ? ' pick' : ''));
+    if (mine) r.appendChild(el('i', 'tag', 'YOURS'));
+    r.appendChild(el('span', null, label));
+    row.appendChild(r);
     row.appendChild(el('span', 'word', s.word));
     const meta = el('span', 'meta');
     meta.innerHTML = s.H.toFixed(3) + ' bits &middot; ~' + s.exp.toFixed(1) +
       ' left &middot; worst case ' + nf(s.worst) +
       (s.isCand ? ' &middot; <span style="color:#7ec06f">could be the answer</span>' : '');
+    if (mine && s.rank != null) {
+      meta.innerHTML += '<br><span style="color:var(--accent)">ranks ' + nf(s.rank) +
+        ' of ' + nf(s.total) + (s.rank === 1 ? ' — the best there is' : '') + '</span>';
+    } else if (mine && !s.inList) {
+      meta.innerHTML += '<br><span class="warn">not in the word list — cannot be the answer</span>';
+    }
     const bar = el('span', 'bar'); const fill = el('i');
     fill.style.width = Math.max(4, s.H / hmax * 100) + '%';
     bar.appendChild(fill); meta.appendChild(bar);
@@ -453,13 +526,24 @@ function render() {
     row.appendChild(el('span', 'go', 'USE'));
     row.onclick = (ev) => {
       if (ev.target.className === 'go' || s.word === focusWord) { loadGuess(s.word); return; }
-      regroup(s.word);
+      analyse(s.word);
     };
-    p2.appendChild(row);
+    return row;
+  };
+
+  const inTop = pinned && pinned.stats ? last.suggestions.findIndex(x => x.word === pinned.word) : -1;
+  if (pinned && pinned.stats && inTop < 0) {
+    p2.appendChild(sugRow(pinned.stats, pinned.stats.inList ? '#' + nf(pinned.stats.rank) : '—', true));
+  }
+  last.suggestions.forEach((s, i) => {
+    p2.appendChild(sugRow(s, String(i + 1), inTop === i));
   });
-  p2.appendChild(el('div', 'sub', useHist
-    ? 'Ranked by information gained, with each word weighted by its chance of being the answer. Tap a row to see how it splits the pool; tap USE to play it.'
-    : 'Ranked by information gained (entropy), treating every remaining word as equally likely. Tap a row to see how it splits the pool; tap USE to play it.'));
+
+  p2.appendChild(el('div', 'sub', (useHist
+    ? 'Ranked by information gained, with each word weighted by its chance of being the answer. '
+    : 'Ranked by information gained (entropy), treating every remaining word as equally likely. ')
+    + 'Tap a row to see how it splits the pool; tap USE to play it. '
+    + 'To weigh up any other word, press and hold it in the list above — or just type it in.'));
   outEl.appendChild(p2);
 
   /* pattern groups */

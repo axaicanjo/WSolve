@@ -130,17 +130,41 @@ function weightsFor(cand, useHist, rho) {
   return w;
 }
 
-function rank(cand, limit, w) {
-  const n = cand.length;
-  const bins = new Float64Array(243);
-  const cnts = new Int32Array(243);
+/* best entropy first; a word that could itself be the answer wins ties */
+const byValue = (a, b) => (b.H - a.H) || (b.isCand - a.isCand) || (a.worst - b.worst);
+
+/* Score one guess against the surviving candidates. `gi` is its index in W, or
+   -1 for a word outside the list (a typed probe), which is scored on the fly. */
+function scoreGuess(gi, word, cand, w, candSet) {
+  const bins = new Float64Array(243), cnts = new Int32Array(243);
+  const base = gi * N;
+  for (let i = 0; i < cand.length; i++) {
+    const s = cand[i];
+    const p = gi >= 0 ? MAT[base + s] : patStr(word, s);
+    bins[p] += w[i]; cnts[p]++;
+  }
+  let H = 0, exp = 0, worst = 0;
+  for (let p = 0; p < 243; p++) {
+    const q = bins[p];
+    if (q <= 0) continue;
+    H -= q * (Math.log(q) / LOG2);
+    exp += q * cnts[p];
+    if (cnts[p] > worst) worst = cnts[p];
+  }
+  return { i: gi, H, exp, worst, isCand: gi >= 0 && candSet[gi] === 1 };
+}
+
+/* Every word in the list, scored and ordered. rank() is just its head; the
+   analyse path needs the whole ordering so it can report a word's position. */
+function rankAll(cand, w) {
   const candSet = new Uint8Array(N);
-  for (let i = 0; i < n; i++) candSet[cand[i]] = 1;
+  for (let i = 0; i < cand.length; i++) candSet[cand[i]] = 1;
+  const bins = new Float64Array(243), cnts = new Int32Array(243);
   const res = [];
   for (let g = 0; g < N; g++) {
     bins.fill(0); cnts.fill(0);
     const base = g * N;
-    for (let i = 0; i < n; i++) { const p = MAT[base + cand[i]]; bins[p] += w[i]; cnts[p]++; }
+    for (let i = 0; i < cand.length; i++) { const p = MAT[base + cand[i]]; bins[p] += w[i]; cnts[p]++; }
     let H = 0, exp = 0, worst = 0;
     for (let p = 0; p < 243; p++) {
       const q = bins[p];
@@ -149,13 +173,16 @@ function rank(cand, limit, w) {
       exp += q * cnts[p];
       if (cnts[p] > worst) worst = cnts[p];
     }
-    res.push({ i: g, H: H, exp: exp, worst: worst, isCand: candSet[g] === 1 });
+    res.push({ i: g, H, exp, worst, isCand: candSet[g] === 1 });
   }
-  // best entropy first; a word that could itself be the answer wins ties
-  res.sort((a, b) => (b.H - a.H) || (b.isCand - a.isCand) || (a.worst - b.worst));
-  return res.slice(0, limit).map(r => ({
-    word: W[r.i], H: r.H, exp: r.exp, worst: r.worst, isCand: r.isCand
-  }));
+  res.sort(byValue);
+  return res;
+}
+
+const asSuggestion = r => ({ word: W[r.i], H: r.H, exp: r.exp, worst: r.worst, isCand: r.isCand });
+
+function rank(cand, limit, w) {
+  return rankAll(cand, w).slice(0, limit).map(asSuggestion);
 }
 
 /* With the historic model ON: never-used first (alphabetical), then
@@ -223,7 +250,7 @@ onmessage = (e) => {
     let hits = 0;
     for (const [word, num] of m.pairs) {
       const i = IDX.get(word);
-      if (i === undefined) continue;                 // answer outside our 2,486-word list
+      if (i === undefined) continue;                 // answer outside our word list
       if (num > LASTUSED[i]) { if (LASTUSED[i] < 0) hits++; LASTUSED[i] = num; }
     }
     postMessage({ type: 'historyOk', matched: hits });
@@ -259,5 +286,32 @@ onmessage = (e) => {
   if (m.type === 'groups') {
     const cand = filter(m.history);
     postMessage({ type: 'groupsOnly', pick: m.word, groups: groupsFor(m.word, cand, !!m.useHist), token: m.token });
+    return;
+  }
+  /* Score any word the user chose — a surviving candidate they long-pressed, or
+     anything they typed — with exactly the numbers the ten suggestions carry,
+     plus where it sits in the full ordering so they can see what the choice
+     costs. A word outside the list has no rank; `rank` comes back null. */
+  if (m.type === 'analyse') {
+    const cand = filter(m.history);
+    const showHist = !!m.useHist;
+    if (!cand.length) {
+      postMessage({ type: 'analysis', word: m.word, stats: null, groups: [], token: m.token });
+      return;
+    }
+    const w = weightsFor(cand, showHist, m.rho);
+    const candSet = new Uint8Array(N);
+    for (let i = 0; i < cand.length; i++) candSet[cand[i]] = 1;
+    const inList = IDX.has(m.word);
+    const gi = inList ? IDX.get(m.word) : -1;
+    const st = scoreGuess(gi, m.word, cand, w, candSet);
+    let rankPos = null;
+    if (inList) rankPos = rankAll(cand, w).findIndex(r => r.i === gi) + 1;
+    postMessage({
+      type: 'analysis', word: m.word, token: m.token,
+      stats: { word: m.word, H: st.H, exp: st.exp, worst: st.worst, isCand: st.isCand,
+               rank: rankPos, total: N, inList },
+      groups: groupsFor(m.word, cand, showHist)
+    });
   }
 };
