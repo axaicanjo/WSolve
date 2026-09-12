@@ -502,7 +502,7 @@ function render() {
   p2.appendChild(el('h2', null, (HIST.length ? 'Best next guess' : 'Best opening guess') + (useHist ? ' · historic weighting on' : '')));
   const hmax = last.suggestions[0].H || 1;
 
-  const sugRow = (s, label, mine) => {
+  const sugRow = (s, label, mine, showRank) => {
     const row = el('div', 'sug' + (label === '1' ? ' best' : '') + (mine ? ' mine' : ''));
     const r = el('span', 'rank' + (mine ? ' pick' : ''));
     if (mine) r.appendChild(el('i', 'tag', 'YOURS'));
@@ -513,10 +513,15 @@ function render() {
     meta.innerHTML = s.H.toFixed(3) + ' bits &middot; ~' + s.exp.toFixed(1) +
       ' left &middot; worst case ' + nf(s.worst) +
       (s.isCand ? ' &middot; <span style="color:#7ec06f">could be the answer</span>' : '');
-    if (mine && s.rank != null) {
+    /* Only ever say a word is missing from the list when that was actually
+       checked. `inList` exists on an analysed word and nowhere else, so testing
+       it as falsy made every un-analysed row assert its own absence — which is
+       how words plainly sitting in the suggestions came to be labelled as not
+       being in the list. Compare against false explicitly. */
+    if (mine && showRank && s.rank != null) {
       meta.innerHTML += '<br><span style="color:var(--accent)">ranks ' + nf(s.rank) +
         ' of ' + nf(s.total) + (s.rank === 1 ? ' — the best there is' : '') + '</span>';
-    } else if (mine && !s.inList) {
+    } else if (mine && s.inList === false) {
       meta.innerHTML += '<br><span class="warn">not in the word list — cannot be the answer</span>';
     }
     const bar = el('span', 'bar'); const fill = el('i');
@@ -533,10 +538,13 @@ function render() {
 
   const inTop = pinned && pinned.stats ? last.suggestions.findIndex(x => x.word === pinned.word) : -1;
   if (pinned && pinned.stats && inTop < 0) {
-    p2.appendChild(sugRow(pinned.stats, pinned.stats.inList ? '#' + nf(pinned.stats.rank) : '—', true));
+    p2.appendChild(sugRow(pinned.stats, pinned.stats.inList ? '#' + nf(pinned.stats.rank) : '—', true, true));
   }
   last.suggestions.forEach((s, i) => {
-    p2.appendChild(sugRow(s, String(i + 1), inTop === i));
+    const mine = inTop === i;
+    /* Draw a top-ten pick from its own analysis, so it carries the same fields
+       as any other analysed word. Its rank is the row number, so don't repeat it. */
+    p2.appendChild(sugRow(mine ? pinned.stats : s, String(i + 1), mine, false));
   });
 
   p2.appendChild(el('div', 'sub', (useHist
