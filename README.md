@@ -40,7 +40,10 @@ and the outcome-groups panel below always follows whichever word is selected.
 The pin clears itself when you submit a guess, and a typed pin clears when you delete a letter.
 
 
-Words with a green outline are the 68 candidates that were never official Wordle answers.
+A word is shown plain if it has never been a Wordle answer, or amber with the date it was
+used if it has. Those are the only two states. (An earlier version outlined in green the words
+that had been added to a previous word list; that distinction went away when the list became a
+single curated set, and the green with it.)
 
 The word.tips list filters out coarse words, so it was missing eight that *have* been Wordle
 answers — FECAL, GROPE, HORNY, KINKY, MORON, PRICK, SEMEN and SPUNK. Those were added back on

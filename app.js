@@ -3,7 +3,6 @@
 
 const WORDS = [];
 for (let i = 0; i < WORDBLOB.length; i += 5) WORDS.push(WORDBLOB.substr(i, 5));
-const ADDED = new Set(ADDED_IDX.map(i => WORDS[i]));
 
 const $ = id => document.getElementById(id);
 const boardEl = $('board'), outEl = $('out'), hintEl = $('hint'), cntEl = $('cnt');
@@ -377,7 +376,10 @@ function renderStatus() {
 
 /* ---------- output ---------- */
 function chip(w, lu, p) {
-  const c = el('span', 'w tap' + (ADDED.has(w) ? ' added' : '') + (lu >= 0 ? ' used' : '')
+  /* Two states only: plain, or amber for a word that has been an answer before
+     (with the date). The old green marked words added to a previous word list —
+     a distinction that no longer exists now the list is a single curated set. */
+  const c = el('span', 'w tap' + (lu >= 0 ? ' used' : '')
                       + (pinned && pinned.word === w ? ' picked' : ''));
   c.dataset.w = w;
   c.appendChild(el('b', null, w));
