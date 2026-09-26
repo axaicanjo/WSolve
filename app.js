@@ -416,12 +416,8 @@ function renderStatus() {
     const auto = rateAuto();
     const opts = el('div');
     const pick = v => { autoRate = v; LS.set('ws_autoRate', v); renderStatus(); compute(); };
-    optRow(opts, auto, 'Work it out from the answer history',
-      FITINFO
-        ? 'Currently ' + pct(FITINFO.rho) + '. Recalculated every time the app opens, from ' +
-          nf(FITINFO.repeats) + ' repeats over ' + nf(FITINFO.days) + ' days. It climbs as the ' +
-          nf(FITINFO.left) + ' never-used words run down.'
-        : 'Not enough answer history for this yet.',
+    optRow(opts, auto, 'Work it out from history',
+      FITINFO ? null : 'Not enough answer history for this yet.',
       () => { if (FITINFO) pick(true); });
     optRow(opts, !auto, 'Set it myself', null, () => pick(false));
     box.appendChild(opts);
