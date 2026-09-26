@@ -11,7 +11,7 @@ Install it on an iPhone home screen and it runs fullscreen, with no browser chro
 1. Type your guess on the on-screen keyboard.
 2. Tap each letter tile to set its colour: **grey → yellow → green → grey**.
 3. Press **ENTER**. The app shows how many words are still possible, lists them, and ranks the
-   best next guesses by information gain (entropy).
+   best next guesses.
 4. Tap a suggested word to see the colour-pattern groups it would split the pool into; tap **USE**
    to load it as your next guess.
 5. Repeat. When you're done, tap **"… was the solution — finish"**. (An all-green row finishes
@@ -31,9 +31,24 @@ word can be given the same treatment.
   pure probe guess.
 
 The chosen word is pinned at the top of the *Best next guess* list, marked **YOURS**, carrying the
-same figures as the suggestions — bits, expected words remaining, worst case — plus the thing the
+same figures as the suggestions — percentage, expected words remaining, worst case — plus the thing the
 suggestions cannot tell you: **where it ranks out of all 2,383 words**. That is the real cost of
 playing a hunch. "Ranks 28 of 2,383" is a fine guess; "ranks 1,350" means you are giving up a lot.
+
+### How the percentage is worked out
+
+Each guess is scored by the Shannon entropy *H* of the way it splits the remaining words, but the
+number on screen is not bits. `2^H` is the effective number of outcomes a guess separates the pool
+into, so the figure shown is
+
+```
+2^(H − H_best) × 100
+```
+
+— the share of the best available guess's splitting power. The top word is always exactly 100%,
+and the scale uses its full range: at the opening the weakest word in the whole list scores about
+8.5%, where a straight ratio of the entropy numbers would have flattered it to 39%. The bar behind
+each row draws the same measure.
 If your pick is already in the top ten its existing row highlights rather than being duplicated,
 and the outcome-groups panel below always follows whichever word is selected.
 

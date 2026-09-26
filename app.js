@@ -502,7 +502,15 @@ function render() {
   /* suggestions, with the user's own pick pinned alongside them */
   const p2 = el('div', 'panel');
   p2.appendChild(el('h2', null, (HIST.length ? 'Best next guess' : 'Best opening guess') + (useHist ? ' · historic weighting on' : '')));
-  const hmax = last.suggestions[0].H || 1;
+  /* Entropy is reported as a share of the best available guess rather than in
+     bits. `2^H` is the effective number of outcomes a guess splits the pool
+     into, so 2^(H − Hbest) is the fraction of the best word's splitting power —
+     the top word is exactly 100% and a poor one reads honestly poor. The
+     suggestions are sorted, so [0] is the maximum over the whole list and no
+     word can exceed it. */
+  const hmax = last.suggestions[0].H;
+  const share = H => (hmax > 0 ? Math.pow(2, H - hmax) * 100 : 100);
+  const fmtShare = v => (v >= 0.1 ? v.toFixed(1) : '<0.1') + '%';
 
   const sugRow = (s, label, mine, showRank) => {
     const row = el('div', 'sug' + (label === '1' ? ' best' : '') + (mine ? ' mine' : ''));
@@ -512,7 +520,7 @@ function render() {
     row.appendChild(r);
     row.appendChild(el('span', 'word', s.word));
     const meta = el('span', 'meta');
-    meta.innerHTML = s.H.toFixed(3) + ' bits &middot; ~' + s.exp.toFixed(1) +
+    meta.innerHTML = fmtShare(share(s.H)) + ' &middot; ~' + s.exp.toFixed(1) +
       ' left &middot; worst case ' + nf(s.worst) +
       (s.isCand ? ' &middot; <span style="color:#7ec06f">could be the answer</span>' : '');
     /* Only ever say a word is missing from the list when that was actually
@@ -527,7 +535,7 @@ function render() {
       meta.innerHTML += '<br><span class="warn">not in the word list — cannot be the answer</span>';
     }
     const bar = el('span', 'bar'); const fill = el('i');
-    fill.style.width = Math.max(4, s.H / hmax * 100) + '%';
+    fill.style.width = Math.max(3, share(s.H)) + '%';   // the bar shows the same measure as the number
     bar.appendChild(fill); meta.appendChild(bar);
     row.appendChild(meta);
     row.appendChild(el('span', 'go', 'USE'));
@@ -550,8 +558,8 @@ function render() {
   });
 
   p2.appendChild(el('div', 'sub', (useHist
-    ? 'Ranked by information gained, with each word weighted by its chance of being the answer. '
-    : 'Ranked by information gained (entropy), treating every remaining word as equally likely. ')
+    ? 'Percentages compare each word with the best available guess, with every word weighted by its chance of being the answer. '
+    : 'Percentages compare each word with the best available guess: 100% is the most informative word in the list, and every remaining word is treated as equally likely. ')
     + 'Tap a row to see how it splits the pool; tap USE to play it. '
     + 'To weigh up any other word, press and hold it in the list above — or just type it in.'));
   outEl.appendChild(p2);
