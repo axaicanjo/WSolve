@@ -292,8 +292,8 @@ function renderKeyboard() {
     for (const c of r) {
       const k = el('button', 'k', c);
       if (state[c] === 0) k.classList.add('dead');
-      else if (state[c] === 1) k.style.background = 'var(--yellow)';
-      else if (state[c] === 2) k.style.background = 'var(--green)';
+      else if (state[c] === 1) k.classList.add('k1');
+      else if (state[c] === 2) k.classList.add('k2');
       k.onclick = () => { if (input.length < 5) { input += c; marks[input.length - 1] = 0; renderBoard(); } };
       row.appendChild(k);
     }
@@ -372,7 +372,31 @@ function renderPool() {
     'Also offers words Wordle accepts but never uses as answers. Sharper splits, but the best suggestion will often be a word that cannot win, and the opening suggestion takes a few seconds to work out.',
     () => pick(true));
 }
-$('gear').onclick = () => { renderPool(); renderStatus(); $('settings').classList.add('show'); };
+/* ---------- appearance ---------- */
+let theme = LS.get('ws_theme', 'auto');
+function applyTheme() {
+  const r = document.documentElement;
+  if (theme === 'auto') delete r.dataset.theme; else r.dataset.theme = theme;
+  /* Keep the iPhone status bar in step with the page behind it. */
+  const m = document.querySelector('meta[name="theme-color"]');
+  if (m) m.content = getComputedStyle(r).getPropertyValue('--bg').trim() || '#121213';
+}
+function renderTheme() {
+  const box = $('themeopts'); box.textContent = '';
+  const pick = v => { theme = v; LS.set('ws_theme', v); applyTheme(); renderTheme(); };
+  optRow(box, theme === 'auto', 'Match my device', null, () => pick('auto'));
+  optRow(box, theme === 'light', 'Light', null, () => pick('light'));
+  optRow(box, theme === 'dark', 'Dark', null, () => pick('dark'));
+}
+applyTheme();
+/* Follow the device if it changes while the app is open and we are set to. */
+if (window.matchMedia) {
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  const onSys = () => { if (theme === 'auto') applyTheme(); };
+  mq.addEventListener ? mq.addEventListener('change', onSys) : mq.addListener(onSys);
+}
+
+$('gear').onclick = () => { renderPool(); renderStatus(); renderTheme(); $('settings').classList.add('show'); };
 $('sdone').onclick = () => $('settings').classList.remove('show');
 
 /* The fitted rate is only available once the archive has been read and has

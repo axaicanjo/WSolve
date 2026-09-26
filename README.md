@@ -49,6 +49,12 @@ because there is no precomputed table for the extra words (a 12,972 × 12,972 ma
 the candidate set has collapsed and it is instant again. Typing and entering a guess while that
 first calculation is still running is fine — it is queued, not dropped.
 
+### Appearance
+
+Light, dark, or match the device. The choice is remembered and applied before the first paint,
+so there is no flash of the wrong theme on launch; on "match my device" the app follows the
+phone, including a change made while it is open.
+
 ### Use Historic Info, and the repeat chance
 
 Described under [Answer history](#answer-history-and-use-historic-info) below. The status line —
