@@ -36,6 +36,8 @@ const LS = {
 let useHist = LS.get('ws_useHist', false);
 let rho = LS.get('ws_rho', 0.03);
 let wholePool = LS.get('ws_wholePool', false);   // false = recommend only possible answers
+let autoRate = LS.get('ws_autoRate', true);
+let FITINFO = null;
 
 /* ---------- answer history ----------
    past.json holds one entry per puzzle number (index 0 = 19 Jun 2021).
@@ -171,7 +173,7 @@ worker.onmessage = (e) => {
     compute();
     return;
   }
-  if (m.type === 'historyOk') { histMatched = m.matched; renderStatus(); if (ready) compute(); return; }
+  if (m.type === 'historyOk') { histMatched = m.matched; FITINFO = m.fit || null; renderStatus(); if (ready) compute(); return; }
   if (m.type === 'result') {
     if (m.token !== computeTok) return;
     busy = false;
@@ -203,7 +205,7 @@ function compute() {
   computeTok = ++seq;
   analyseTok = -1; groupTok = -1;   // both were about the previous state
   cntEl.textContent = 'working…';
-  worker.postMessage({ type: 'compute', history: HIST, focus: null, useHist, rho, wholeDictionary: wholePool, token: computeTok });
+  worker.postMessage({ type: 'compute', history: HIST, focus: null, useHist, rho, autoRate: rateAuto(), wholeDictionary: wholePool, token: computeTok });
 }
 /* Score an arbitrary word against the current candidates. Not gated on `busy`:
    a long-press should never be swallowed because a compute is in flight — the
@@ -211,7 +213,7 @@ function compute() {
 function analyse(word) {
   if (!ready || !last || !last.count) return;
   analyseTok = ++seq;
-  worker.postMessage({ type: 'analyse', history: HIST, word, useHist, rho, wholeDictionary: wholePool, token: analyseTok });
+  worker.postMessage({ type: 'analyse', history: HIST, word, useHist, rho, autoRate: rateAuto(), wholeDictionary: wholePool, token: analyseTok });
 }
 function regroup(word) {
   if (!ready || busy) return;
@@ -350,29 +352,32 @@ document.addEventListener('keydown', e => {
 });
 
 /* ---------- settings sheet ---------- */
+function optRow(box, on, title, note, onPick) {
+  const o = el('div', 'opt' + (on ? ' on' : ''));
+  o.appendChild(el('span', 'radio'));
+  const l = el('span', 'optlab');
+  l.appendChild(el('b', null, title));
+  if (note) l.appendChild(el('i', null, note));
+  o.appendChild(l);
+  o.onclick = () => { if (!on) onPick(); };
+  box.appendChild(o);
+}
+
 function renderPool() {
   const box = $('poolopts'); box.textContent = '';
-  const mk = (on, title, note, pick) => {
-    const o = el('div', 'opt' + (on ? ' on' : ''));
-    o.appendChild(el('span', 'radio'));
-    const l = el('span', 'optlab');
-    l.appendChild(el('b', null, title));
-    l.appendChild(el('i', null, note));
-    o.appendChild(l);
-    o.onclick = () => {
-      if (wholePool === pick) return;
-      wholePool = pick; LS.set('ws_wholePool', pick);
-      renderPool(); compute();
-    };
-    box.appendChild(o);
-  };
-  mk(!wholePool, 'Possible answers',
-     'Every suggestion is a word that could still win.', false);
-  mk(wholePool, 'All valid guesses',
-     'Also offers words Wordle accepts but never uses as answers. Sharper splits, but the best suggestion will often be a word that cannot win, and the opening suggestion takes a few seconds to work out.', true);
+  const pick = v => { wholePool = v; LS.set('ws_wholePool', v); renderPool(); compute(); };
+  optRow(box, !wholePool, 'Possible answers',
+    'Every suggestion is a word that could still win.', () => pick(false));
+  optRow(box, wholePool, 'All valid guesses',
+    'Also offers words Wordle accepts but never uses as answers. Sharper splits, but the best suggestion will often be a word that cannot win, and the opening suggestion takes a few seconds to work out.',
+    () => pick(true));
 }
 $('gear').onclick = () => { renderPool(); renderStatus(); $('settings').classList.add('show'); };
 $('sdone').onclick = () => $('settings').classList.remove('show');
+
+/* The fitted rate is only available once the archive has been read and has
+   enough in it; otherwise the set rate stands in. */
+const rateAuto = () => autoRate && !!FITINFO;
 
 /* ---------- history status + toggle ---------- */
 function renderStatus() {
@@ -407,18 +412,33 @@ function renderStatus() {
   box.appendChild(top);
 
   if (useHist && HISTORY.size) {
-    const r = el('div', 'sliderow');
-    r.appendChild(el('span', 'slab', 'Chance the answer is a repeat'));
-    const val = el('span', 'sval', (rho * 100).toFixed(0) + '%');
-    r.appendChild(val);
-    const s = document.createElement('input');
-    s.type = 'range'; s.min = '0'; s.max = '25'; s.step = '1'; s.value = String(Math.round(rho * 100));
-    s.oninput = () => { val.textContent = s.value + '%'; };
-    s.onchange = () => { rho = +s.value / 100; LS.set('ws_rho', rho); compute(); };
-    r.appendChild(s);
-    box.appendChild(r);
+    box.appendChild(el('div', 'sseg', 'Chance the answer is a repeat'));
+    const auto = rateAuto();
+    const opts = el('div');
+    const pick = v => { autoRate = v; LS.set('ws_autoRate', v); renderStatus(); compute(); };
+    optRow(opts, auto, 'Work it out from the answer history',
+      FITINFO
+        ? 'Currently ' + pct(FITINFO.rho) + '. Recalculated every time the app opens, from ' +
+          nf(FITINFO.repeats) + ' repeats over ' + nf(FITINFO.days) + ' days. It climbs as the ' +
+          nf(FITINFO.left) + ' never-used words run down.'
+        : 'Not enough answer history for this yet.',
+      () => { if (FITINFO) pick(true); });
+    optRow(opts, !auto, 'Set it myself', null, () => pick(false));
+    box.appendChild(opts);
+    if (!auto) {
+      const r = el('div', 'sliderow');
+      r.appendChild(el('span', 'slab', 'Repeat chance'));
+      const val = el('span', 'sval', (rho * 100).toFixed(0) + '%');
+      r.appendChild(val);
+      const s = document.createElement('input');
+      s.type = 'range'; s.min = '0'; s.max = '60'; s.step = '1'; s.value = String(Math.round(rho * 100));
+      s.oninput = () => { val.textContent = s.value + '%'; };
+      s.onchange = () => { rho = +s.value / 100; LS.set('ws_rho', rho); compute(); };
+      r.appendChild(s);
+      box.appendChild(r);
+    }
     box.appendChild(el('div', 'histnote',
-      'Observed rate since the NYT began recycling answers on 2 Feb 2026 is about 3%. Words used within the last year are treated as unavailable; older ones are weighted by age.'));
+      'Words used a long time ago count for more than recent ones, which are treated as all but unavailable.'));
   }
 
   if (histMsg) box.appendChild(el('div', 'histmsg' + (/refused|not reach/.test(histMsg) ? ' bad' : ''), histMsg));

@@ -49,11 +49,11 @@ because there is no precomputed table for the extra words (a 12,972 × 12,972 ma
 the candidate set has collapsed and it is instant again. Typing and entering a guess while that
 first calculation is still running is fine — it is queued, not dropped.
 
-### Use Historic Info, and the repeat probability
+### Use Historic Info, and the repeat chance
 
-Both described under [Answer history](#answer-history-and-use-historic-info) below. The status
-line — how many past answers are loaded, how current they are, and where they came from — is in
-the settings sheet too, under the toggle.
+Described under [Answer history](#answer-history-and-use-historic-info) below. The status line —
+how many past answers are loaded, how current they are, and where they came from — is in the
+settings sheet too, under the toggle.
 
 ## Weighing up your own guess
 
@@ -107,32 +107,35 @@ nothing fits on those days. All 2,315 original answers are therefore present.
 ## Answer history and "Use Historic Info"
 
 The NYT began **recycling old answers on 2 Feb 2026** — the first repeat was CIGAR, the very
-first puzzle. Known repeats since include HASTY (Apr 2022 → Mar 2026), SANDY (Oct 2024 →
-Apr 2026) and BATON (Dec 2021 → Jul 2026), so roughly 3% of answers are now repeats and the
-gap has never been shorter than about 18 months.
+first puzzle. Since then repeats have been running at roughly one every nine days, and the gap
+has never been shorter than about a year and a half.
 
 The app uses that. Once it has the answer archive, the candidate list is always split into:
 
 - **Never been an answer** — listed alphabetically;
 - **Previously an answer** — listed oldest use first, each with the date it was used.
 
-Every word carries its probability of being today's answer:
+Every word carries its own probability of being today's answer. A word used a long time ago
+counts for much more than one used recently, and the probabilities always add to 100% across
+whatever words are still in play.
 
-```
-never used:      (1 − ρ) / (number of never-used candidates)
-previously used:  ρ · ageWeight(w) / Σ ageWeight
-ageWeight(a days since last use) = max(0, a − 365) + 0.05 · min(a, 365)
-```
+The **Use Historic Info** toggle controls the *ranking*. Off, suggestions are ranked by plain
+entropy with every candidate equally likely — identical to the solver without this feature, with
+no dates or probabilities shown anywhere. On, the entropy is computed over the weighted
+distribution, so the app stops spending information on words it thinks are unlikely to come up.
 
-ρ defaults to 3% and is adjustable in the app from 0 to 25%. The 365-day cooldown reflects the
-observed gap; the 0.05 tail keeps a recently-used word merely unlikely rather than impossible,
-since the cooldown is inferred from a handful of repeats, not a published rule.
+### Chance the answer is a repeat
 
-The **Use Historic Info** toggle controls only the *ranking*. Off, suggestions are ranked by plain
-entropy with every candidate equally likely — identical to the solver without this feature. On,
-the entropy is computed over the weighted distribution above, so the app stops spending
-information on words it thinks are unlikely to come up. The list ordering and the percentages are
-shown either way.
+Two options, in settings:
+
+- **Work it out from the answer history** (the default) — the app derives the figure from the
+  archive each time it opens, so it stays current on its own. It reports what it is using and
+  what it was calculated from.
+- **Set it myself** — a slider, 0 to 60%, for when you want to see what a different assumption
+  does to the ranking.
+
+Either way the per-word arithmetic is the same; only the source of the overall figure changes.
+If the archive is too short or has gaps in it, the app says so and uses the slider value instead.
 
 ### Where the history comes from
 

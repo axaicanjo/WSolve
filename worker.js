@@ -89,51 +89,88 @@ const LOG2 = Math.log(2);
 /* ---------- historic-answer weighting ----------
    LASTUSED[i] = puzzle number of the most recent time word i was the answer,
    or -1 if it has never been an answer. TODAYNUM = today's puzzle number.
-
    With "Use Historic Info" off every candidate is equally likely, which
-   reproduces the plain solver exactly. With it on:
-     - never-used words share (1 - RHO) of the probability, evenly;
-     - previously-used words share RHO, in proportion to how long ago they
-       were used, counting mainly the age beyond COOLDOWN days.
-   RHO defaults to the observed repeat rate since the NYT began recycling
-   answers on 2 Feb 2026; COOLDOWN reflects that no repeat so far has come
-   back sooner than about a year and a half. Inside the cooldown a word keeps
-   a small residual weight (TAIL) rather than dropping to exactly zero — the
-   cooldown is an inference from a handful of repeats, not a published rule. */
+   reproduces the plain solver exactly. */
 let LASTUSED = null;
 let TODAYNUM = -1;
-const COOLDOWN = 365;
-const TAIL = 0.05;
-const ageWeight = a => Math.max(0, a - COOLDOWN) + TAIL * Math.min(a, COOLDOWN);
+const AGE0 = 500, AGE1 = 1600;
+const ageW = a => (a <= AGE0 ? 0 : Math.min(1, (a - AGE0) / (AGE1 - AGE0)));
 
-function weightsFor(cand, useHist, rho) {
+let FIT = null;
+
+function poolState() {
+  let F = 0, S = 0;
+  for (let i = 0; i < N; i++) {
+    const lu = LASTUSED[i];
+    if (lu < 0) F++; else S += ageW(TODAYNUM - lu);
+  }
+  return { F, S };
+}
+
+/* Returns null when the archive cannot support a result. */
+function fitLam(seq) {
+  const n = seq.length;
+  if (!n) return null;
+  let first = -1;
+  const seen = new Set(), lastAt = new Map();
+  for (let k = 0; k < n; k++) { if (seen.has(seq[k][0])) { first = k; break; } seen.add(seq[k][0]); }
+  if (first < 0) return null;
+  const from = seq[first][1];
+  for (let k = first; k < n; k++) if (seq[k][1] !== from + (k - first)) return null;  // gap
+
+  seen.clear();
+  let fresh = 0;
+  const Fs = [], Ss = [], rep = [];
+  for (let k = 0; k < n; k++) {
+    const [word, num] = seq[k];
+    if (k >= first) {
+      let S = 0;
+      for (const at of lastAt.values()) S += ageW(num - at);
+      Fs.push(N - fresh); Ss.push(S); rep.push(seen.has(word) ? 1 : 0);
+    }
+    if (!seen.has(word)) { seen.add(word); if (IDX.has(word)) fresh++; }
+    lastAt.set(word, num);
+  }
+  const R = rep.reduce((a, b) => a + b, 0);
+  const expected = lam => {
+    let e = 0;
+    for (let i = 0; i < Fs.length; i++) e += lam * Ss[i] / (Fs[i] + lam * Ss[i]);
+    return e;
+  };
+  let lo = 1e-6, hi = 10;
+  if (expected(hi) < R + 0.5) return null;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    if (expected(mid) < R + 0.5) lo = mid; else hi = mid;
+  }
+  const lam = Math.min(2, Math.max(0.002, (lo + hi) / 2));
+  return { lam, days: Fs.length, repeats: R };
+}
+
+/* Same arithmetic, with lam taken from the rate the user set. */
+function lamForRate(rho) {
+  const { F, S } = poolState();
+  if (S <= 0 || rho <= 0) return 0;
+  if (rho >= 1) return 1e6;
+  return (rho / (1 - rho)) * (F / S);
+}
+
+function weightsFor(cand, useHist, rho, autoRate) {
   const n = cand.length;
   const w = new Float64Array(n);
   if (!useHist || !LASTUSED || TODAYNUM < 0) { w.fill(1 / n); return w; }
-  let nNew = 0, sumRaw = 0;
-  const raw = new Float64Array(n);
+  const lam = autoRate && FIT ? FIT.lam : lamForRate(rho);
+  let sum = 0;
   for (let i = 0; i < n; i++) {
     const lu = LASTUSED[cand[i]];
-    if (lu < 0) { nNew++; raw[i] = -1; }
-    else { const r = ageWeight(TODAYNUM - lu); raw[i] = r; sumRaw += r; }
+    w[i] = lu < 0 ? 1 : lam * ageW(TODAYNUM - lu);
+    sum += w[i];
   }
-  const nUsed = n - nNew;
-  if (nUsed === 0 || sumRaw === 0) {
-    // nothing recyclable left: spread everything over the never-used words
-    if (nNew === 0) { w.fill(1 / n); return w; }
-    for (let i = 0; i < n; i++) w[i] = raw[i] < 0 ? 1 / nNew : 0;
-    return w;
-  }
-  if (nNew === 0) {
-    for (let i = 0; i < n; i++) w[i] = raw[i] / sumRaw;
-    return w;
-  }
-  const pNew = (1 - rho) / nNew;
-  for (let i = 0; i < n; i++) w[i] = raw[i] < 0 ? pNew : rho * raw[i] / sumRaw;
+  if (sum <= 0) { w.fill(1 / n); return w; }   // nothing left to distinguish them
+  for (let i = 0; i < n; i++) w[i] /= sum;
   return w;
 }
 
-/* best entropy first; a word that could itself be the answer wins ties */
 const byValue = (a, b) => (b.H - a.H) || (b.isCand - a.isCand) || (a.worst - b.worst);
 
 /* ---------- the guess pool ----------
@@ -282,7 +319,14 @@ onmessage = (e) => {
       if (i === undefined) continue;                 // answer outside our word list
       if (num > LASTUSED[i]) { if (LASTUSED[i] < 0) hits++; LASTUSED[i] = num; }
     }
-    postMessage({ type: 'historyOk', matched: hits });
+    const seq = m.pairs.slice().sort((a, b) => a[1] - b[1]);
+    FIT = fitLam(seq);
+    if (FIT) {
+      const { F, S } = poolState();
+      FIT.rho = F + FIT.lam * S > 0 ? FIT.lam * S / (F + FIT.lam * S) : 1;
+      FIT.left = F;
+    }
+    postMessage({ type: 'historyOk', matched: hits, fit: FIT });
     return;
   }
   if (m.type === 'compute') {
@@ -290,13 +334,13 @@ onmessage = (e) => {
     let suggestions = [], groups = [], pick = null, words = [], lastUsed = [], probs = [];
     const showHist = !!m.useHist;
     if (cand.length > 0) {
-      const w = weightsFor(cand, showHist, m.rho);
+      const w = weightsFor(cand, showHist, m.rho, !!m.autoRate);
       suggestions = rank(cand, 10, w, !!m.wholeDictionary);
       pick = m.focus && suggestions.some(s => s.word === m.focus) ? m.focus : suggestions[0].word;
       groups = groupsFor(pick, cand, showHist);
       // Probabilities are part of the historic model, so they go with it. With
       // the toggle off every word is equally likely and there is nothing to say.
-      const pw = showHist ? weightsFor(cand, true, m.rho) : null;
+      const pw = showHist ? weightsFor(cand, true, m.rho, !!m.autoRate) : null;
       const pos = new Map();
       for (let i = 0; i < cand.length; i++) pos.set(cand[i], i);
       const ord = orderIdx(Array.from(cand), showHist);
@@ -328,7 +372,7 @@ onmessage = (e) => {
       postMessage({ type: 'analysis', word: m.word, stats: null, groups: [], token: m.token });
       return;
     }
-    const w = weightsFor(cand, showHist, m.rho);
+    const w = weightsFor(cand, showHist, m.rho, !!m.autoRate);
     const candSet = new Uint8Array(N);
     for (let i = 0; i < cand.length; i++) candSet[cand[i]] = 1;
     const st = scoreWord(m.word, cand, w, candSet);
