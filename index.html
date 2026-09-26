@@ -184,6 +184,28 @@ button.ghost{
 .sug .rank .tag{display:block;font-style:normal;font-size:8px;letter-spacing:.1em;opacity:.85}
 .w.picked{outline:2px solid var(--accent);outline-offset:1px}
 .w{-webkit-touch-callout:none}
+
+.iconbtn.gear{font-size:16px;line-height:1;padding:4px 8px}
+header h1{font-size:14px}
+#settings{position:fixed;inset:0;z-index:40;background:var(--bg);display:none;
+  flex-direction:column;padding-top:var(--safe-t)}
+#settings.show{display:flex}
+.shead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);flex:0 0 auto}
+.shead span{flex:1;font-size:15px;font-weight:700;letter-spacing:.14em;text-transform:uppercase}
+.sbody{flex:1 1 auto;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:4px 12px calc(20px + var(--safe-b))}
+.sgroup{border:1px solid var(--line);border-radius:10px;padding:12px;margin:12px 0;background:#171718}
+.sttl{font-size:13px;font-weight:700}
+.ssub{font-size:11px;color:var(--dim);line-height:1.5;margin-top:3px}
+.opt{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-top:1px solid #2b2b2d;cursor:pointer}
+.opt:first-child{border-top:none;margin-top:6px}
+.radio{width:18px;height:18px;border-radius:50%;border:2px solid #5a5a5d;flex:0 0 auto;margin-top:1px;position:relative}
+.opt.on .radio{border-color:var(--accent)}
+.opt.on .radio::after{content:'';position:absolute;inset:3px;border-radius:50%;background:var(--accent)}
+.optlab{flex:1}
+.optlab b{display:block;font-size:13px;font-weight:600}
+.optlab i{display:block;font-style:normal;font-size:11px;color:var(--dim);line-height:1.45;margin-top:2px}
+.sug .can{color:#7ec06f}
+.sug .cant{color:#8a9096}
 </style>
 </head>
 <body>
@@ -192,16 +214,29 @@ button.ghost{
 <header>
   <h1>Wordle Solver</h1>
   <span class="chip" id="cnt">&mdash;</span>
+  <button class="iconbtn gear" id="gear" aria-label="Settings">&#9881;</button>
   <button class="iconbtn" id="undo">Undo</button>
   <button class="iconbtn" id="reset">New</button>
 </header>
 
 <main id="main">
   <div id="board"></div>
-  <div id="hist"></div>
   <div class="hint" id="hint"></div>
   <div id="out"></div>
 </main>
+
+<div id="settings">
+  <div class="shead"><span>Settings</span><button class="iconbtn" id="sdone">Done</button></div>
+  <div class="sbody">
+    <div class="sgroup">
+      <div class="sttl">Guess pool</div>
+      <div class="ssub">What the app is allowed to recommend. Widening it lets the solver suggest
+        probe words that cannot win but split the remaining words more sharply.</div>
+      <div id="poolopts"></div>
+    </div>
+    <div class="sgroup" id="hist"></div>
+  </div>
+</div>
 
 <div id="kb"></div>
 

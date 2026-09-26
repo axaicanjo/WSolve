@@ -14,7 +14,9 @@ const P3 = [81, 27, 9, 3, 1];
    the real game does: greens claim their letter first, then yellows consume
    whatever copies are left over, left to right. */
 function patCodes(gc, go, sc, so, cnt) {
-  cnt.fill(0);
+  /* `cnt` counts the answer's unmatched letters. Only the five slots s0..s4 are
+     ever touched, so they are zeroed again on the way out rather than clearing
+     all 26 — this runs 25M times on an opening move with the full dictionary. */
   let m0 = 0, m1 = 0, m2 = 0, m3 = 0, m4 = 0;
   const g0 = gc[go], g1 = gc[go + 1], g2 = gc[go + 2], g3 = gc[go + 3], g4 = gc[go + 4];
   const s0 = sc[so], s1 = sc[so + 1], s2 = sc[so + 2], s3 = sc[so + 3], s4 = sc[so + 4];
@@ -28,6 +30,7 @@ function patCodes(gc, go, sc, so, cnt) {
   if (m2 === 0 && cnt[g2] > 0) { m2 = 1; cnt[g2]--; }
   if (m3 === 0 && cnt[g3] > 0) { m3 = 1; cnt[g3]--; }
   if (m4 === 0 && cnt[g4] > 0) { m4 = 1; cnt[g4]--; }
+  cnt[s0] = 0; cnt[s1] = 0; cnt[s2] = 0; cnt[s3] = 0; cnt[s4] = 0;
   return m0 * 81 + m1 * 27 + m2 * 9 + m3 * 3 + m4;
 }
 
@@ -133,15 +136,31 @@ function weightsFor(cand, useHist, rho) {
 /* best entropy first; a word that could itself be the answer wins ties */
 const byValue = (a, b) => (b.H - a.H) || (b.isCand - a.isCand) || (a.worst - b.worst);
 
-/* Score one guess against the surviving candidates. `gi` is its index in W, or
-   -1 for a word outside the list (a typed probe), which is scored on the fly. */
-function scoreGuess(gi, word, cand, w, candSet) {
-  const bins = new Float64Array(243), cnts = new Int32Array(243);
-  const base = gi * N;
-  for (let i = 0; i < cand.length; i++) {
-    const s = cand[i];
-    const p = gi >= 0 ? MAT[base + s] : patStr(word, s);
-    bins[p] += w[i]; cnts[p]++;
+/* ---------- the guess pool ----------
+   Every candidate is a solution word, so MAT already covers each
+   (solution guess × candidate) pair. The 10,589 extra valid guesses are not in
+   it: a full 12,972² table would be ~170 MB, far too much for a phone. They
+   carry letter codes only and are scored on the fly, which costs ~25M pattern
+   computations on the opening move and almost nothing after that, because the
+   candidate set collapses as soon as there is a clue. */
+let X = [], M = 0, XCODES = null;
+const XIDX = new Map();
+
+const SCRATCH = { bins: new Float64Array(243), cnts: new Int32Array(243), cnt: new Uint8Array(26) };
+
+/* Score one guess against the surviving candidates. Pass gi >= 0 to read the
+   precomputed row; otherwise give the guess's letter codes and an offset. */
+function scoreCodes(codes, off, cand, w, gi, candSet) {
+  const bins = SCRATCH.bins, cnts = SCRATCH.cnts;
+  bins.fill(0); cnts.fill(0);
+  if (gi >= 0) {
+    const base = gi * N;
+    for (let i = 0; i < cand.length; i++) { const p = MAT[base + cand[i]]; bins[p] += w[i]; cnts[p]++; }
+  } else {
+    for (let i = 0; i < cand.length; i++) {
+      const p = patCodes(codes, off, CODES, cand[i] * 5, SCRATCH.cnt);
+      bins[p] += w[i]; cnts[p]++;
+    }
   }
   let H = 0, exp = 0, worst = 0;
   for (let p = 0; p < 243; p++) {
@@ -151,38 +170,42 @@ function scoreGuess(gi, word, cand, w, candSet) {
     exp += q * cnts[p];
     if (cnts[p] > worst) worst = cnts[p];
   }
-  return { i: gi, H, exp, worst, isCand: gi >= 0 && candSet[gi] === 1 };
+  return { H, exp, worst, isCand: gi >= 0 && candSet[gi] === 1 };
 }
 
-/* Every word in the list, scored and ordered. rank() is just its head; the
-   analyse path needs the whole ordering so it can report a word's position. */
-function rankAll(cand, w) {
+/* Score any word at all, whether it is a solution word, one of the extra valid
+   guesses, or something the user typed that is neither. */
+function scoreWord(word, cand, w, candSet) {
+  const gi = IDX.has(word) ? IDX.get(word) : -1;
+  if (gi >= 0) return scoreCodes(null, 0, cand, w, gi, candSet);
+  const xi = XIDX.has(word) ? XIDX.get(word) : -1;
+  if (xi >= 0) return scoreCodes(XCODES, xi * 5, cand, w, -1, candSet);
+  const codes = new Uint8Array(5);
+  for (let i = 0; i < 5; i++) codes[i] = word.charCodeAt(i) - 97;
+  return scoreCodes(codes, 0, cand, w, -1, candSet);
+}
+
+/* Every word in the active pool, scored and ordered. */
+function rankAll(cand, w, wholeDictionary) {
   const candSet = new Uint8Array(N);
   for (let i = 0; i < cand.length; i++) candSet[cand[i]] = 1;
-  const bins = new Float64Array(243), cnts = new Int32Array(243);
   const res = [];
   for (let g = 0; g < N; g++) {
-    bins.fill(0); cnts.fill(0);
-    const base = g * N;
-    for (let i = 0; i < cand.length; i++) { const p = MAT[base + cand[i]]; bins[p] += w[i]; cnts[p]++; }
-    let H = 0, exp = 0, worst = 0;
-    for (let p = 0; p < 243; p++) {
-      const q = bins[p];
-      if (q <= 0) continue;
-      H -= q * (Math.log(q) / LOG2);
-      exp += q * cnts[p];
-      if (cnts[p] > worst) worst = cnts[p];
+    const r = scoreCodes(null, 0, cand, w, g, candSet);
+    res.push({ word: W[g], H: r.H, exp: r.exp, worst: r.worst, isCand: r.isCand });
+  }
+  if (wholeDictionary) {
+    for (let g = 0; g < M; g++) {
+      const r = scoreCodes(XCODES, g * 5, cand, w, -1, candSet);
+      res.push({ word: X[g], H: r.H, exp: r.exp, worst: r.worst, isCand: false });
     }
-    res.push({ i: g, H, exp, worst, isCand: candSet[g] === 1 });
   }
   res.sort(byValue);
   return res;
 }
 
-const asSuggestion = r => ({ word: W[r.i], H: r.H, exp: r.exp, worst: r.worst, isCand: r.isCand });
-
-function rank(cand, limit, w) {
-  return rankAll(cand, w).slice(0, limit).map(asSuggestion);
+function rank(cand, limit, w, wholeDictionary) {
+  return rankAll(cand, w, wholeDictionary).slice(0, limit);
 }
 
 /* With the historic model ON: never-used first (alphabetical), then
@@ -240,8 +263,14 @@ onmessage = (e) => {
       IDX.set(W[i], i);
       for (let j = 0; j < 5; j++) CODES[i * 5 + j] = W[i].charCodeAt(j) - 97;
     }
+    X = m.extras || []; M = X.length;
+    XCODES = new Uint8Array(M * 5);
+    for (let i = 0; i < M; i++) {
+      XIDX.set(X[i], i);
+      for (let j = 0; j < 5; j++) XCODES[i * 5 + j] = X[i].charCodeAt(j) - 97;
+    }
     build();
-    postMessage({ type: 'ready', n: N });
+    postMessage({ type: 'ready', n: N, extras: M });
     return;
   }
   if (m.type === 'history') {
@@ -262,7 +291,7 @@ onmessage = (e) => {
     const showHist = !!m.useHist;
     if (cand.length > 0) {
       const w = weightsFor(cand, showHist, m.rho);
-      suggestions = rank(cand, 10, w);
+      suggestions = rank(cand, 10, w, !!m.wholeDictionary);
       pick = m.focus && suggestions.some(s => s.word === m.focus) ? m.focus : suggestions[0].word;
       groups = groupsFor(pick, cand, showHist);
       // Probabilities are part of the historic model, so they go with it. With
@@ -302,15 +331,17 @@ onmessage = (e) => {
     const w = weightsFor(cand, showHist, m.rho);
     const candSet = new Uint8Array(N);
     for (let i = 0; i < cand.length; i++) candSet[cand[i]] = 1;
-    const inList = IDX.has(m.word);
-    const gi = inList ? IDX.get(m.word) : -1;
-    const st = scoreGuess(gi, m.word, cand, w, candSet);
-    let rankPos = null;
-    if (inList) rankPos = rankAll(cand, w).findIndex(r => r.i === gi) + 1;
+    const st = scoreWord(m.word, cand, w, candSet);
+    /* Rank is counted rather than looked up, so a word outside the active pool
+       still gets a meaningful "it would come in at #N" against that pool. */
+    const all = rankAll(cand, w, !!m.wholeDictionary);
+    let rankPos = 1;
+    for (const e of all) if (byValue(e, st) < 0) rankPos++;
     postMessage({
       type: 'analysis', word: m.word, token: m.token,
       stats: { word: m.word, H: st.H, exp: st.exp, worst: st.worst, isCand: st.isCand,
-               rank: rankPos, total: N, inList },
+               rank: rankPos, total: all.length,
+               inSolutions: IDX.has(m.word), validGuess: IDX.has(m.word) || XIDX.has(m.word) },
       groups: groupsFor(m.word, cand, showHist)
     });
   }

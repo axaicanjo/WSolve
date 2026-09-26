@@ -19,6 +19,42 @@ Install it on an iPhone home screen and it runs fullscreen, with no browser chro
 
 **Undo** removes the last guess (or clears the row you're typing). **New** starts a fresh puzzle.
 
+## Settings
+
+The **gear** in the top bar opens a full-screen settings sheet. Everything that changes how the
+solver behaves lives there, which keeps the main screen for the board and the suggestions.
+
+### Guess pool
+
+What the app is allowed to recommend.
+
+- **Possible answers** (the default) — suggestions are drawn only from the 2,383 words that could
+  still win. Every one of them might end the game on the spot.
+- **All valid guesses** — the pool becomes all **12,972** words Wordle accepts, which adds 10,589
+  words that the game never uses as answers. These are pure probes: they cannot win, but they are
+  free to use letters purely to split the field, so they often split it more sharply.
+
+The difference is real but not enormous. At the opening, SOARE and ROATE beat the best playable
+word, RAISE, by about half a percent of splitting power — worth having when you are hunting for a
+certain solve, not worth much when you are just trying to win. It matters more in the endgame,
+where a probe can separate four remaining candidates in one guess that a candidate cannot.
+
+Every suggestion is labelled **could be the answer** or **cannot be the answer**, in both modes,
+so the trade-off is always visible. Where two words split the pool equally well, the one that
+could win is ranked first.
+
+The cost is time: with the full dictionary the opening suggestion takes a few seconds to work out,
+because there is no precomputed table for the extra words (a 12,972 × 12,972 matrix would be
+~170 MB, far too much for a phone, so they are scored on the fly). From the second guess onwards
+the candidate set has collapsed and it is instant again. Typing and entering a guess while that
+first calculation is still running is fine — it is queued, not dropped.
+
+### Use Historic Info, and the repeat probability
+
+Both described under [Answer history](#answer-history-and-use-historic-info) below. The status
+line — how many past answers are loaded, how current they are, and where they came from — is in
+the settings sheet too, under the toggle.
+
 ## Weighing up your own guess
 
 The ten suggestions are only the head of a ranking that covers every word in the list, so any
@@ -31,9 +67,12 @@ word can be given the same treatment.
   pure probe guess.
 
 The chosen word is pinned at the top of the *Best next guess* list, marked **YOURS**, carrying the
-same figures as the suggestions — percentage, expected words remaining, worst case — plus the thing the
-suggestions cannot tell you: **where it ranks out of all 2,383 words**. That is the real cost of
-playing a hunch. "Ranks 28 of 2,383" is a fine guess; "ranks 1,350" means you are giving up a lot.
+same figures as the suggestions — percentage, expected words remaining, worst case, and whether it
+could be the answer — plus the thing the suggestions cannot tell you: **where it ranks in the
+current guess pool**. That is the real cost of playing a hunch. "Ranks 28 of 2,383" is a fine
+guess; "ranks 1,350" means you are giving up a lot. A word outside the pool — a probe while the
+pool is answers only — reads "would rank", and a word Wordle does not accept at all is also told
+so plainly, separately from whether it could be the answer.
 
 ### How the percentage is worked out
 
@@ -161,7 +200,7 @@ refreshes cached files in the background. To force it, bump `CACHE` in `sw.js`.
 | `index.html` | Markup and styles |
 | `app.js` | UI: board, keyboard, panels |
 | `worker.js` | Solver in a Web Worker — pattern matrix, filtering, entropy ranking |
-| `words.js` | The 2,383-word list (concatenated, 5 chars each) + indices of the 68 non-official words |
+| `words.js` | `WORDBLOB`, the 2,383 possible answers, and `GUESSBLOB`, the 10,589 further words Wordle accepts (concatenated, 5 chars each, both alphabetical) |
 | `past.json` | Dated archive of Wordle answers, one per puzzle number |
 | `.github/workflows/wordle-history.yml` | Self-contained daily task that rewrites `past.json`; `backfill` input seeds it |
 | `scripts/update-history.mjs` | The same script as a standalone file, if you'd rather run it by hand |
@@ -176,11 +215,23 @@ scored exactly as the real game does: greens claim their letter first, then yell
 remaining copies left to right.
 
 After each clue, the candidate set is filtered to words that would have produced the exact pattern
-you entered. Every one of the 2,383 words is then scored by the Shannon entropy of the partition
-it induces on the remaining candidates; ties go to a word that could itself be the answer.
+you entered. Every word in the active guess pool is then scored by the Shannon entropy of the
+partition it induces on the remaining candidates; ties go to a word that could itself be the
+answer.
+
+The matrix covers solution words only, which is enough for the default pool, because a candidate
+is by definition a solution word. With **All valid guesses** the extra 10,589 words are scored
+directly from their letters, against the surviving candidates only — the work is proportional to
+how many words are still in play, so it is heavy once at the opening and negligible thereafter.
+Both paths were checked against an independent Python implementation and agree to four decimal
+places, and the default pool's rankings are unchanged to the last digit from before this option
+existed.
 
 Measured over 304 simulated games starting from RAISE: **3.49 guesses on average, worst case 5,
 zero failures.**
 
-Best openers by entropy: RAISE (5.883 bits), SLATE (5.858), IRATE (5.828), ARISE (5.824),
-CRATE (5.822).
+Best openers by entropy, possible answers only: RAISE (5.883 bits), SLATE (5.858), IRATE (5.828),
+ARISE (5.824), CRATE (5.822).
+
+Best openers from all 12,972 valid guesses: SOARE (5.892), ROATE (5.884), RAISE (5.883),
+REAST (5.870), RAILE (5.863) — only the third of those can win.

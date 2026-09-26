@@ -3,6 +3,10 @@
 
 const WORDS = [];
 for (let i = 0; i < WORDBLOB.length; i += 5) WORDS.push(WORDBLOB.substr(i, 5));
+/* Valid Wordle guesses that are never solutions. Only offered as suggestions
+   when the guess pool is widened; they can never be candidates. */
+const EXTRAS = [];
+for (let i = 0; i < GUESSBLOB.length; i += 5) EXTRAS.push(GUESSBLOB.substr(i, 5));
 
 const $ = id => document.getElementById(id);
 const boardEl = $('board'), outEl = $('out'), hintEl = $('hint'), cntEl = $('cnt');
@@ -14,7 +18,15 @@ let last = null;         // last worker result
 let focusWord = null;    // which suggestion the groups panel is showing
 let pinned = null;       // {word, stats, groups} for a word the user chose to analyse
 let typedPin = false;    // true when `pinned` came from the row being typed, not a long-press
-let token = 0, busy = false, ready = false;
+/* One sequence number per request, but a separate slot per kind of reply.
+   A single shared "latest token wins" counter meant that typing a word while a
+   ranking was still being worked out threw the ranking away when it arrived:
+   the analysis had moved the counter on. The board then kept showing the
+   previous puzzle's numbers. Each kind of reply is now only ever made stale by
+   a newer request of its own kind — plus a fresh compute, which invalidates
+   everything, because it changes the state the others were answering about. */
+let seq = 0, computeTok = -1, analyseTok = -1, groupTok = -1;
+let busy = false, ready = false;
 
 /* ---------- settings ---------- */
 const LS = {
@@ -23,6 +35,7 @@ const LS = {
 };
 let useHist = LS.get('ws_useHist', false);
 let rho = LS.get('ws_rho', 0.03);
+let wholePool = LS.get('ws_wholePool', false);   // false = recommend only possible answers
 
 /* ---------- answer history ----------
    past.json holds one entry per puzzle number (index 0 = 19 Jun 2021).
@@ -147,7 +160,7 @@ function pushHistory() {
 
 /* ---------- worker ---------- */
 const worker = new Worker('worker.js');
-worker.postMessage({ type: 'init', words: WORDS });
+worker.postMessage({ type: 'init', words: WORDS, extras: EXTRAS });
 worker.onmessage = (e) => {
   const m = e.data;
   if (m.type === 'progress') { $('bootbar').style.width = m.p + '%'; return; }
@@ -159,11 +172,23 @@ worker.onmessage = (e) => {
     return;
   }
   if (m.type === 'historyOk') { histMatched = m.matched; renderStatus(); if (ready) compute(); return; }
-  if (m.token !== token) return;           // stale
-  busy = false;
-  if (m.type === 'result') { last = m; focusWord = m.pick; render(); }
-  if (m.type === 'groupsOnly') { last.groups = m.groups; focusWord = m.pick; render(); }
+  if (m.type === 'result') {
+    if (m.token !== computeTok) return;
+    busy = false;
+    last = m; focusWord = m.pick; render();
+    /* A full row typed while this was being worked out still deserves its
+       answer: the compute cleared the pin, so ask again. */
+    maybeAnalyseTyped();
+    return;
+  }
+  if (m.type === 'groupsOnly') {
+    if (m.token !== groupTok) return;
+    busy = false;
+    last.groups = m.groups; focusWord = m.pick; render();
+    return;
+  }
   if (m.type === 'analysis') {
+    if (m.token !== analyseTok) return;
     if (!last) return;
     pinned = m; focusWord = m.word;
     if (m.groups && m.groups.length) last.groups = m.groups;
@@ -174,22 +199,25 @@ worker.onmessage = (e) => {
 function compute() {
   if (!ready) return;
   pinned = null; typedPin = false;
-  busy = true; token++;
+  busy = true;
+  computeTok = ++seq;
+  analyseTok = -1; groupTok = -1;   // both were about the previous state
   cntEl.textContent = 'working…';
-  worker.postMessage({ type: 'compute', history: HIST, focus: null, useHist, rho, token });
+  worker.postMessage({ type: 'compute', history: HIST, focus: null, useHist, rho, wholeDictionary: wholePool, token: computeTok });
 }
 /* Score an arbitrary word against the current candidates. Not gated on `busy`:
    a long-press should never be swallowed because a compute is in flight — the
    token check already discards whatever comes back out of order. */
 function analyse(word) {
   if (!ready || !last || !last.count) return;
-  token++;
-  worker.postMessage({ type: 'analyse', history: HIST, word, useHist, rho, token });
+  analyseTok = ++seq;
+  worker.postMessage({ type: 'analyse', history: HIST, word, useHist, rho, wholeDictionary: wholePool, token: analyseTok });
 }
 function regroup(word) {
   if (!ready || busy) return;
-  busy = true; token++;
-  worker.postMessage({ type: 'groups', history: HIST, word, useHist, token });
+  busy = true;
+  groupTok = ++seq;
+  worker.postMessage({ type: 'groups', history: HIST, word, useHist, token: groupTok });
 }
 
 /* ---------- helpers ---------- */
@@ -278,7 +306,13 @@ function renderKeyboard() {
 
 /* ---------- actions ---------- */
 function submit() {
-  if (input.length !== 5 || busy) return;
+  /* Deliberately not gated on `busy`. A guess the user has already typed and
+     entered must never be silently swallowed because the solver happens to be
+     mid-calculation — with the full dictionary the opening ranking takes a few
+     seconds, which is exactly when someone types their first guess. The worker
+     handles messages in order and every reply is matched to its request, so
+     queueing a second compute behind the first is safe. */
+  if (input.length !== 5) return;
   HIST.push({ guess: input, marks: marks.slice(), pattern: enc(marks) });
   input = ''; marks = [0, 0, 0, 0, 0];
   renderBoard(); renderKeyboard();
@@ -314,6 +348,31 @@ document.addEventListener('keydown', e => {
     input += e.key.toLowerCase(); marks[input.length - 1] = 0; renderBoard();
   }
 });
+
+/* ---------- settings sheet ---------- */
+function renderPool() {
+  const box = $('poolopts'); box.textContent = '';
+  const mk = (on, title, note, pick) => {
+    const o = el('div', 'opt' + (on ? ' on' : ''));
+    o.appendChild(el('span', 'radio'));
+    const l = el('span', 'optlab');
+    l.appendChild(el('b', null, title));
+    l.appendChild(el('i', null, note));
+    o.appendChild(l);
+    o.onclick = () => {
+      if (wholePool === pick) return;
+      wholePool = pick; LS.set('ws_wholePool', pick);
+      renderPool(); compute();
+    };
+    box.appendChild(o);
+  };
+  mk(!wholePool, 'Possible answers',
+     'Every suggestion is a word that could still win.', false);
+  mk(wholePool, 'All valid guesses',
+     'Also offers words Wordle accepts but never uses as answers. Sharper splits, but the best suggestion will often be a word that cannot win, and the opening suggestion takes a few seconds to work out.', true);
+}
+$('gear').onclick = () => { renderPool(); renderStatus(); $('settings').classList.add('show'); };
+$('sdone').onclick = () => $('settings').classList.remove('show');
 
 /* ---------- history status + toggle ---------- */
 function renderStatus() {
@@ -501,13 +560,18 @@ function render() {
 
   /* suggestions, with the user's own pick pinned alongside them */
   const p2 = el('div', 'panel');
-  p2.appendChild(el('h2', null, (HIST.length ? 'Best next guess' : 'Best opening guess') + (useHist ? ' · historic weighting on' : '')));
+  p2.appendChild(el('h2', null, (HIST.length ? 'Best next guess' : 'Best opening guess')
+    + (wholePool ? ' · all valid guesses' : '')
+    + (useHist ? ' · historic weighting on' : '')));
   /* Entropy is reported as a share of the best available guess rather than in
      bits. `2^H` is the effective number of outcomes a guess splits the pool
      into, so 2^(H − Hbest) is the fraction of the best word's splitting power —
      the top word is exactly 100% and a poor one reads honestly poor. The
      suggestions are sorted, so [0] is the maximum over the whole list and no
      word can exceed it. */
+  /* Is this word one the app could have suggested? That depends on the pool. */
+  const inPool = s => (wholePool ? s.validGuess !== false : s.inSolutions !== false);
+
   const hmax = last.suggestions[0].H;
   const share = H => (hmax > 0 ? Math.pow(2, H - hmax) * 100 : 100);
   const fmtShare = v => (v >= 0.1 ? v.toFixed(1) : '<0.1') + '%';
@@ -521,18 +585,24 @@ function render() {
     row.appendChild(el('span', 'word', s.word));
     const meta = el('span', 'meta');
     meta.innerHTML = fmtShare(share(s.H)) + ' &middot; ~' + s.exp.toFixed(1) +
-      ' left &middot; worst case ' + nf(s.worst) +
-      (s.isCand ? ' &middot; <span style="color:#7ec06f">could be the answer</span>' : '');
-    /* Only ever say a word is missing from the list when that was actually
-       checked. `inList` exists on an analysed word and nowhere else, so testing
-       it as falsy made every un-analysed row assert its own absence — which is
-       how words plainly sitting in the suggestions came to be labelled as not
-       being in the list. Compare against false explicitly. */
+      ' left &middot; worst case ' + nf(s.worst) + ' &middot; ' +
+      (s.isCand ? '<span class="can">could be the answer</span>'
+                : '<span class="cant">cannot be the answer</span>');
+    /* A rank is against the words the app is currently choosing from, so a word
+       outside that pool gets "would rank" rather than "ranks". */
     if (mine && showRank && s.rank != null) {
-      meta.innerHTML += '<br><span style="color:var(--accent)">ranks ' + nf(s.rank) +
-        ' of ' + nf(s.total) + (s.rank === 1 ? ' — the best there is' : '') + '</span>';
-    } else if (mine && s.inList === false) {
-      meta.innerHTML += '<br><span class="warn">not in the word list — cannot be the answer</span>';
+      meta.innerHTML += '<br><span style="color:var(--accent)">' +
+        (inPool(s) ? 'ranks ' : 'would rank ') + nf(s.rank) + ' of ' + nf(s.total) +
+        (s.rank === 1 ? ' — the best there is' : '') + '</span>';
+    }
+    /* Separate from the could/cannot-be-the-answer verdict above: this one says
+       Wordle would not accept the word at all. Only ever say a word is missing
+       when that was actually checked — these fields exist on an analysed word
+       and nowhere else, so compare against false explicitly rather than testing
+       for falsy, which is what once made every ordinary row assert its own
+       absence from the list. */
+    if (mine && s.validGuess === false) {
+      meta.innerHTML += '<br><span class="warn">not a word Wordle accepts — you cannot play it</span>';
     }
     const bar = el('span', 'bar'); const fill = el('i');
     fill.style.width = Math.max(3, share(s.H)) + '%';   // the bar shows the same measure as the number
@@ -548,7 +618,8 @@ function render() {
 
   const inTop = pinned && pinned.stats ? last.suggestions.findIndex(x => x.word === pinned.word) : -1;
   if (pinned && pinned.stats && inTop < 0) {
-    p2.appendChild(sugRow(pinned.stats, pinned.stats.inList ? '#' + nf(pinned.stats.rank) : '—', true, true));
+    p2.appendChild(sugRow(pinned.stats,
+      pinned.stats.validGuess === false ? '—' : '#' + nf(pinned.stats.rank), true, true));
   }
   last.suggestions.forEach((s, i) => {
     const mine = inTop === i;
