@@ -28,8 +28,8 @@ solver behaves lives there, which keeps the main screen for the board and the su
 
 What the app is allowed to recommend.
 
-- **Possible answers** (the default) — suggestions are drawn only from the 2,383 words that could
-  still win. Every one of them might end the game on the spot.
+- **The answer list** (the default) — suggestions are drawn from the 2,383 words that can ever be
+  an answer. Some will already be ruled out by your clues; each row says which.
 - **All valid guesses** — the pool becomes all **12,972** words Wordle accepts, which adds 10,589
   words that the game never uses as answers. These are pure probes: they cannot win, but they are
   free to use letters purely to split the field, so they often split it more sharply.
@@ -48,6 +48,21 @@ because there is no precomputed table for the extra words (a 12,972 × 12,972 ma
 ~170 MB, far too much for a phone, so they are scored on the fly). From the second guess onwards
 the candidate set has collapsed and it is instant again. Typing and entering a guess while that
 first calculation is still running is fine — it is queued, not dropped.
+
+### Hard mode
+
+Restricts the suggestions to words that use every clue revealed so far, the way the game's own
+hard mode does: a green letter must stay in its square, and a letter shown green or yellow must
+appear at least as many times as it has been shown. Grey letters may be reused, and a yellow may
+be retried in the same square — both match Wordle.
+
+Any word that could still be the answer satisfies those rules automatically, so this only ever
+removes probe words. With the guess pool set to the answer list it changes little; with it set to
+all valid guesses it is doing real work. Typing a word that breaks the rules still analyses it,
+with a note that hard mode would reject it.
+
+Over 120 simulated games it costs about 0.2 guesses on average, and occasionally runs past six —
+which is hard mode, not the solver.
 
 ### Appearance
 

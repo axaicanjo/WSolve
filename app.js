@@ -37,6 +37,7 @@ let useHist = LS.get('ws_useHist', false);
 let rho = LS.get('ws_rho', 0.03);
 let wholePool = LS.get('ws_wholePool', false);   // false = recommend only possible answers
 let autoRate = LS.get('ws_autoRate', true);
+let hardMode = LS.get('ws_hardMode', false);
 let FITINFO = null;
 
 /* ---------- answer history ----------
@@ -205,7 +206,7 @@ function compute() {
   computeTok = ++seq;
   analyseTok = -1; groupTok = -1;   // both were about the previous state
   cntEl.textContent = 'working…';
-  worker.postMessage({ type: 'compute', history: HIST, focus: null, useHist, rho, autoRate: rateAuto(), wholeDictionary: wholePool, token: computeTok });
+  worker.postMessage({ type: 'compute', history: HIST, focus: null, useHist, rho, autoRate: rateAuto(), wholeDictionary: wholePool, hardMode, token: computeTok });
 }
 /* Score an arbitrary word against the current candidates. Not gated on `busy`:
    a long-press should never be swallowed because a compute is in flight — the
@@ -213,7 +214,7 @@ function compute() {
 function analyse(word) {
   if (!ready || !last || !last.count) return;
   analyseTok = ++seq;
-  worker.postMessage({ type: 'analyse', history: HIST, word, useHist, rho, autoRate: rateAuto(), wholeDictionary: wholePool, token: analyseTok });
+  worker.postMessage({ type: 'analyse', history: HIST, word, useHist, rho, autoRate: rateAuto(), wholeDictionary: wholePool, hardMode, token: analyseTok });
 }
 function regroup(word) {
   if (!ready || busy) return;
@@ -366,11 +367,28 @@ function optRow(box, on, title, note, onPick) {
 function renderPool() {
   const box = $('poolopts'); box.textContent = '';
   const pick = v => { wholePool = v; LS.set('ws_wholePool', v); renderPool(); compute(); };
-  optRow(box, !wholePool, 'Possible answers',
-    'Every suggestion is a word that could still win.', () => pick(false));
+  optRow(box, !wholePool, 'The answer list',
+    'Suggestions are drawn from the 2,383 words that can ever be an answer. Some of them will already be ruled out by your clues; each row says which.', () => pick(false));
   optRow(box, wholePool, 'All valid guesses',
-    'Also offers words Wordle accepts but never uses as answers. Sharper splits, but the best suggestion will often be a word that cannot win, and the opening suggestion takes a few seconds to work out.',
+    'Also offers words Wordle accepts but never uses as answers. Sharper splits, but the best suggestion will usually be a word that cannot win, and the opening suggestion takes a few seconds to work out.',
     () => pick(true));
+}
+
+/* ---------- hard mode ---------- */
+function renderHard() {
+  const box = $('hardopts'); box.textContent = '';
+  const top = el('div', 'histrow');
+  const lab = el('div', 'histlab');
+  lab.appendChild(el('span', 'histttl', 'Hard mode'));
+  lab.appendChild(el('span', 'histsub',
+    'Only suggest words that use every clue so far, as the game requires. Words that could still be the answer always qualify, so this only narrows things down when the guess pool is set to all valid guesses.'));
+  top.appendChild(lab);
+  const sw = el('button', 'switch' + (hardMode ? ' on' : ''));
+  sw.appendChild(el('i'));
+  sw.setAttribute('aria-label', 'Hard mode');
+  sw.onclick = () => { hardMode = !hardMode; LS.set('ws_hardMode', hardMode); renderHard(); compute(); };
+  top.appendChild(sw);
+  box.appendChild(top);
 }
 /* ---------- appearance ---------- */
 let theme = LS.get('ws_theme', 'auto');
@@ -396,7 +414,7 @@ if (window.matchMedia) {
   mq.addEventListener ? mq.addEventListener('change', onSys) : mq.addListener(onSys);
 }
 
-$('gear').onclick = () => { renderPool(); renderStatus(); renderTheme(); $('settings').classList.add('show'); };
+$('gear').onclick = () => { renderPool(); renderHard(); renderStatus(); renderTheme(); $('settings').classList.add('show'); };
 $('sdone').onclick = () => $('settings').classList.remove('show');
 
 /* The fitted rate is only available once the archive has been read and has
@@ -602,6 +620,7 @@ function render() {
   const p2 = el('div', 'panel');
   p2.appendChild(el('h2', null, (HIST.length ? 'Best next guess' : 'Best opening guess')
     + (wholePool ? ' · all valid guesses' : '')
+    + (hardMode && HIST.length ? ' · hard mode' : '')
     + (useHist ? ' · historic weighting on' : '')));
   /* Entropy is reported as a share of the best available guess rather than in
      bits. `2^H` is the effective number of outcomes a guess splits the pool
@@ -610,10 +629,15 @@ function render() {
      suggestions are sorted, so [0] is the maximum over the whole list and no
      word can exceed it. */
   /* Is this word one the app could have suggested? That depends on the pool. */
-  const inPool = s => (wholePool ? s.validGuess !== false : s.inSolutions !== false);
+  const inPool = s => (wholePool ? s.validGuess !== false : s.inSolutions !== false)
+                      && s.hardOk !== false;
 
   const hmax = last.suggestions[0].H;
-  const share = H => (hmax > 0 ? Math.pow(2, H - hmax) * 100 : 100);
+  /* Capped at 100. A word you typed can be stronger than anything on the list —
+     a probe while the pool is the answer list, or a word hard mode has ruled
+     out — and reading "110%" against a scale whose top is defined as 100 is
+     just confusing. The row says why that word is not being suggested. */
+  const share = H => Math.min(100, hmax > 0 ? Math.pow(2, H - hmax) * 100 : 100);
   const fmtShare = v => (v >= 0.1 ? v.toFixed(1) : '<0.1') + '%';
 
   const sugRow = (s, label, mine, showRank) => {
@@ -633,7 +657,7 @@ function render() {
     if (mine && showRank && s.rank != null) {
       meta.innerHTML += '<br><span style="color:var(--accent)">' +
         (inPool(s) ? 'ranks ' : 'would rank ') + nf(s.rank) + ' of ' + nf(s.total) +
-        (s.rank === 1 ? ' — the best there is' : '') + '</span>';
+        (s.rank === 1 && inPool(s) ? ' — the best there is' : '') + '</span>';
     }
     /* Separate from the could/cannot-be-the-answer verdict above: this one says
        Wordle would not accept the word at all. Only ever say a word is missing
@@ -643,6 +667,8 @@ function render() {
        absence from the list. */
     if (mine && s.validGuess === false) {
       meta.innerHTML += '<br><span class="warn">not a word Wordle accepts — you cannot play it</span>';
+    } else if (mine && s.hardOk === false) {
+      meta.innerHTML += '<br><span class="warn">does not use every clue — hard mode would reject it</span>';
     }
     const bar = el('span', 'bar'); const fill = el('i');
     fill.style.width = Math.max(3, share(s.H)) + '%';   // the bar shows the same measure as the number

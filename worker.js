@@ -222,17 +222,64 @@ function scoreWord(word, cand, w, candSet) {
   return scoreCodes(codes, 0, cand, w, -1, candSet);
 }
 
+/* ---------- hard mode ----------
+   Wordle's rule is that every hint already revealed must be used again:
+   a letter shown green has to stay in that square, and a letter shown green or
+   yellow has to appear at least as many times as it has been shown. Grey
+   letters may be reused, and a yellow may be tried in the same square again —
+   both of those match the game. Any word still consistent with the clues
+   passes automatically, so this only ever removes probe words. */
+function hardFrom(history) {
+  if (!history.length) return null;
+  const fixed = new Int8Array(5).fill(-1);
+  const need = new Int8Array(26);
+  for (const h of history) {
+    const marks = decode(h.pattern);
+    const seen = new Int8Array(26);
+    for (let i = 0; i < 5; i++) {
+      const c = h.guess.charCodeAt(i) - 97;
+      if (marks[i] === 2) fixed[i] = c;
+      if (marks[i] > 0) seen[c]++;
+    }
+    for (let c = 0; c < 26; c++) if (seen[c] > need[c]) need[c] = seen[c];
+  }
+  let any = false;
+  for (let c = 0; c < 26; c++) if (need[c]) { any = true; break; }
+  return { fixed, need, any };
+}
+
+/* Its own counter, deliberately not SCRATCH.cnt: patCodes is entitled to find
+   that one full of zeros, and borrowing it here left letter counts behind that
+   silently corrupted the next pattern it worked out. */
+const HCNT = new Uint8Array(26);
+function hardOkCodes(codes, off, hard) {
+  const { fixed, need, any } = hard;
+  for (let i = 0; i < 5; i++) if (fixed[i] >= 0 && codes[off + i] !== fixed[i]) return false;
+  if (!any) return true;
+  HCNT.fill(0);
+  for (let i = 0; i < 5; i++) HCNT[codes[off + i]]++;
+  for (let c = 0; c < 26; c++) if (need[c] && HCNT[c] < need[c]) return false;
+  return true;
+}
+const hardOkWord = (word, hard) => {
+  const codes = new Uint8Array(5);
+  for (let i = 0; i < 5; i++) codes[i] = word.charCodeAt(i) - 97;
+  return hardOkCodes(codes, 0, hard);
+};
+
 /* Every word in the active pool, scored and ordered. */
-function rankAll(cand, w, wholeDictionary) {
+function rankAll(cand, w, wholeDictionary, hard) {
   const candSet = new Uint8Array(N);
   for (let i = 0; i < cand.length; i++) candSet[cand[i]] = 1;
   const res = [];
   for (let g = 0; g < N; g++) {
+    if (hard && !hardOkCodes(CODES, g * 5, hard)) continue;
     const r = scoreCodes(null, 0, cand, w, g, candSet);
     res.push({ word: W[g], H: r.H, exp: r.exp, worst: r.worst, isCand: r.isCand });
   }
   if (wholeDictionary) {
     for (let g = 0; g < M; g++) {
+      if (hard && !hardOkCodes(XCODES, g * 5, hard)) continue;
       const r = scoreCodes(XCODES, g * 5, cand, w, -1, candSet);
       res.push({ word: X[g], H: r.H, exp: r.exp, worst: r.worst, isCand: false });
     }
@@ -241,8 +288,8 @@ function rankAll(cand, w, wholeDictionary) {
   return res;
 }
 
-function rank(cand, limit, w, wholeDictionary) {
-  return rankAll(cand, w, wholeDictionary).slice(0, limit);
+function rank(cand, limit, w, wholeDictionary, hard) {
+  return rankAll(cand, w, wholeDictionary, hard).slice(0, limit);
 }
 
 /* With the historic model ON: never-used first (alphabetical), then
@@ -335,7 +382,7 @@ onmessage = (e) => {
     const showHist = !!m.useHist;
     if (cand.length > 0) {
       const w = weightsFor(cand, showHist, m.rho, !!m.autoRate);
-      suggestions = rank(cand, 10, w, !!m.wholeDictionary);
+      suggestions = rank(cand, 10, w, !!m.wholeDictionary, m.hardMode ? hardFrom(m.history) : null);
       pick = m.focus && suggestions.some(s => s.word === m.focus) ? m.focus : suggestions[0].word;
       groups = groupsFor(pick, cand, showHist);
       // Probabilities are part of the historic model, so they go with it. With
@@ -378,14 +425,16 @@ onmessage = (e) => {
     const st = scoreWord(m.word, cand, w, candSet);
     /* Rank is counted rather than looked up, so a word outside the active pool
        still gets a meaningful "it would come in at #N" against that pool. */
-    const all = rankAll(cand, w, !!m.wholeDictionary);
+    const hard = m.hardMode ? hardFrom(m.history) : null;
+    const all = rankAll(cand, w, !!m.wholeDictionary, hard);
     let rankPos = 1;
     for (const e of all) if (byValue(e, st) < 0) rankPos++;
     postMessage({
       type: 'analysis', word: m.word, token: m.token,
       stats: { word: m.word, H: st.H, exp: st.exp, worst: st.worst, isCand: st.isCand,
                rank: rankPos, total: all.length,
-               inSolutions: IDX.has(m.word), validGuess: IDX.has(m.word) || XIDX.has(m.word) },
+               inSolutions: IDX.has(m.word), validGuess: IDX.has(m.word) || XIDX.has(m.word),
+               hardOk: hard ? hardOkWord(m.word, hard) : true },
       groups: groupsFor(m.word, cand, showHist)
     });
   }
