@@ -1,6 +1,6 @@
 {
-  "name": "Wordle Solver",
-  "short_name": "Solver",
+  "name": "Beat the Bot",
+  "short_name": "Beat the Bot",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

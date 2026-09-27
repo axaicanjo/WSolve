@@ -1,4 +1,4 @@
-/* Wordle Solver — UI */
+/* Beat the Bot — UI */
 'use strict';
 
 const WORDS = [];

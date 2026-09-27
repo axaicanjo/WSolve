@@ -1,6 +1,8 @@
-# Wordle Solver
+# Beat the Bot
 
-An offline-capable web app (PWA) that solves Wordle against the **Semi Official Wordle Solution List** —
+An offline-capable web app (PWA) that helps you play Wordle *while* you are playing it, rather than
+telling you afterwards what you should have done. It works against the **Semi Official Wordle Solution
+List** —
 2,383 words (2,315 original Wordle answers, plus 68 others), transcribed from the word.tips
 list on 1 Sep 2026. It replaced the 2,489-word Expanded list on 8 Sep 2026.
 

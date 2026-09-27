@@ -1,4 +1,4 @@
-/* Wordle Solver — pattern matrix + entropy ranking (runs off the main thread) */
+/* Beat the Bot — pattern matrix + entropy ranking (runs off the main thread) */
 'use strict';
 
 let W = [];          // words, lowercase
