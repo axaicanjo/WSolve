@@ -3,8 +3,9 @@
 An offline-capable web app (PWA) that helps you play Wordle *while* you are playing it, rather than
 telling you afterwards what you should have done. It works against the **Semi Official Wordle Solution
 List** —
-2,383 words (2,315 original Wordle answers, plus 68 others), transcribed from the word.tips
-list on 1 Sep 2026. It replaced the 2,489-word Expanded list on 8 Sep 2026.
+2,394 words as of 8 Oct 2026 (all 2,315 original Wordle answers, plus later NYT answers), taken from
+the word.tips list. A nightly GitHub task checks word.tips at midnight New York time and adds any new
+answers automatically, so the count only grows. It replaced the 2,489-word Expanded list on 8 Sep 2026.
 
 Install it on an iPhone home screen and it runs fullscreen, with no browser chrome and no network.
 
@@ -30,9 +31,9 @@ solver behaves lives there, which keeps the main screen for the board and the su
 
 What the app is allowed to recommend.
 
-- **The answer list** (the default) — suggestions are drawn from the 2,383 words that can ever be
+- **The answer list** (the default) — suggestions are drawn from the ~2,400 words that can ever be
   an answer. Some will already be ruled out by your clues; each row says which.
-- **All valid guesses** — the pool becomes all **12,972** words Wordle accepts, which adds 10,589
+- **All valid guesses** — the pool becomes all **12,972** words Wordle accepts, which adds ~10,580
   words that the game never uses as answers. These are pure probes: they cannot win, but they are
   free to use letters purely to split the field, so they often split it more sharply.
 
@@ -92,7 +93,7 @@ word can be given the same treatment.
 The chosen word is pinned at the top of the *Best next guess* list, marked **YOURS**, carrying the
 same figures as the suggestions — percentage, expected words remaining, worst case, and whether it
 could be the answer — plus the thing the suggestions cannot tell you: **where it ranks in the
-current guess pool**. That is the real cost of playing a hunch. "Ranks 28 of 2,383" is a fine
+current guess pool**. That is the real cost of playing a hunch. "Ranks 28 of 2,394" is a fine
 guess; "ranks 1,350" means you are giving up a lot. A word outside the pool — a probe while the
 pool is answers only — reads "would rank", and a word Wordle does not accept at all is also told
 so plainly, separately from whether it could be the answer.
@@ -226,16 +227,18 @@ refreshes cached files in the background. To force it, bump `CACHE` in `sw.js`.
 | `index.html` | Markup and styles |
 | `app.js` | UI: board, keyboard, panels |
 | `worker.js` | Solver in a Web Worker — pattern matrix, filtering, entropy ranking |
-| `words.js` | `WORDBLOB`, the 2,383 possible answers, and `GUESSBLOB`, the 10,589 further words Wordle accepts (concatenated, 5 chars each, both alphabetical) |
+| `words.js` | `WORDBLOB`, the possible answers (2,394 on 8 Oct 2026, grows nightly), and `GUESSBLOB`, the remaining Wordle accepts (concatenated, 5 chars each, both alphabetical) |
 | `past.json` | Dated archive of Wordle answers, one per puzzle number |
 | `.github/workflows/wordle-history.yml` | Self-contained daily task that rewrites `past.json`; `backfill` input seeds it |
+| `.github/workflows/wordlist-update.yml` | Nightly task (midnight New York time): fetches word.tips' NYT answer list and adds any new words to `words.js` via `update-wordlist.mjs` |
+| `update-wordlist.mjs` | The add-only list updater; `node update-wordlist.mjs word1 word2` adds words by hand |
 | `scripts/update-history.mjs` | The same script as a standalone file, if you'd rather run it by hand |
 | `sw.js` | Service worker for offline use |
 | `manifest.webmanifest`, `icon-*.png`, `apple-touch-icon.png` | Home-screen install metadata |
 
 ## How the solver works
 
-On load, the worker precomputes the full 2,383 × 2,383 feedback matrix (~5.7 MB) — every possible
+On load, the worker precomputes the full N × N feedback matrix (~5.7 MB at N ≈ 2,400) — every possible
 guess against every possible answer, encoded as one of 243 colour patterns. Duplicate letters are
 scored exactly as the real game does: greens claim their letter first, then yellows consume the
 remaining copies left to right.
@@ -246,7 +249,7 @@ partition it induces on the remaining candidates; ties go to a word that could i
 answer.
 
 The matrix covers solution words only, which is enough for the default pool, because a candidate
-is by definition a solution word. With **All valid guesses** the extra 10,589 words are scored
+is by definition a solution word. With **All valid guesses** the extra ~10,580 words are scored
 directly from their letters, against the surviving candidates only — the work is proportional to
 how many words are still in play, so it is heavy once at the opening and negligible thereafter.
 Both paths were checked against an independent Python implementation and agree to four decimal
