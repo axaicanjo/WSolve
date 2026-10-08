@@ -1,0 +1,52 @@
+name: Update answer word list
+
+# Every night at midnight New York time, fetches word.tips' "NYT Wordle answers"
+# list and adds any new words to words.js (add-only; nothing is ever removed).
+# The app loads words.js network-first, so new words are there the next time
+# the app is opened online.
+#
+# GitHub schedules are in UTC: 04:05 UTC is 00:05 EDT (summer) and 05:05 UTC is
+# 00:05 EST (winter). One of the two runs lands at midnight; the other finds
+# nothing new and does nothing. GitHub may start scheduled runs some minutes late.
+#
+# To run it by hand: Actions tab -> "Update answer word list" -> Run workflow.
+
+on:
+  schedule:
+    - cron: '5 4 * * *'
+    - cron: '5 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wordlist-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Add new answers from word.tips
+        run: node update-wordlist.mjs
+
+      - name: Commit if changed
+        run: |
+          if git diff --quiet -- words.js; then
+            echo "no change"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add words.js
+          git commit -m "Add new answers from word.tips ($(date -u +%Y-%m-%d))"
+          git pull --rebase
+          git push
