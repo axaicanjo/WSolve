@@ -368,7 +368,7 @@ function renderPool() {
   const box = $('poolopts'); box.textContent = '';
   const pick = v => { wholePool = v; LS.set('ws_wholePool', v); renderPool(); compute(); };
   optRow(box, !wholePool, 'The answer list',
-    'Suggestions are drawn from the 2,383 words that can ever be an answer. Some of them will already be ruled out by your clues; each row says which.', () => pick(false));
+    'Suggestions are drawn from the ' + nf(WORDS.length) + ' words that can ever be an answer. Some of them will already be ruled out by your clues; each row says which.', () => pick(false));
   optRow(box, wholePool, 'All valid guesses',
     'Also offers words Wordle accepts but never uses as answers. Sharper splits, but the best suggestion will usually be a word that cannot win, and the opening suggestion takes a few seconds to work out.',
     () => pick(true));
