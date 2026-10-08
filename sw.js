@@ -1,4 +1,4 @@
-const CACHE = 'beatthebot-v19';
+const CACHE = 'beatthebot-v20';
 const ASSETS = ['./', './index.html', './app.js', './words.js', './worker.js',
                 './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
@@ -20,8 +20,9 @@ self.addEventListener('fetch', e => {
   // Anything off-origin (the NYT answer endpoint) goes straight to the network.
   if (url.origin !== self.location.origin) return;
 
-  // past.json changes daily — try the network first, fall back to the cached copy.
-  if (url.pathname.endsWith('/past.json')) {
+  // past.json and words.js change daily (answer history; new answers added
+  // automatically) — try the network first, fall back to the cached copy.
+  if (url.pathname.endsWith('/past.json') || url.pathname.endsWith('/words.js')) {
     e.respondWith(
       fetch(req).then(resp => {
         const copy = resp.clone();
