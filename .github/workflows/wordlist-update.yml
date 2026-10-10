@@ -1,20 +1,20 @@
 name: Update answer word list
 
-# Every night at midnight New York time, fetches word.tips' "NYT Wordle answers"
+# Every evening at 8 p.m. New York time, fetches word.tips' "NYT Wordle answers"
 # list and adds any new words to words.js (add-only; nothing is ever removed).
 # The app loads words.js network-first, so new words are there the next time
 # the app is opened online.
 #
-# GitHub schedules are in UTC: 04:05 UTC is 00:05 EDT (summer) and 05:05 UTC is
-# 00:05 EST (winter). One of the two runs lands at midnight; the other finds
-# nothing new and does nothing. GitHub may start scheduled runs some minutes late.
+# GitHub schedules are in UTC: 00:05 UTC is 8:05 p.m. EDT (summer) and 01:05 UTC is
+# 8:05 p.m. EST (winter). The other run lands at 7:05 or 9:05 p.m. and does no harm.
+# GitHub often starts scheduled runs late (hours, at busy times).
 #
 # To run it by hand: Actions tab -> "Update answer word list" -> Run workflow.
 
 on:
   schedule:
-    - cron: '5 4 * * *'
-    - cron: '5 5 * * *'
+    - cron: '5 0 * * *'
+    - cron: '5 1 * * *'
   workflow_dispatch:
 
 permissions:
