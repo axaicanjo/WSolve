@@ -8,7 +8,7 @@
  * the answer list: the NYT recycles old answers, so a word word.tips drops could
  * still come up.
  */
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, appendFile } from 'node:fs/promises';
 
 const FILE = process.cwd() + '/words.js';
 const API = 'https://fly.wordfinderapi.com/api/search?contains=_____&length=5'
@@ -77,3 +77,9 @@ const out = src
 await writeFile(FILE, out);
 console.log(`added ${added.length}: ${added.join(' ').toUpperCase()}`);
 console.log(`answers ${W.length} -> ${newW.length}; other valid guesses ${G.length} -> ${newG.length}`);
+
+// For the GitHub task: hand the result to the step that sends the notice.
+if (process.env.GITHUB_OUTPUT) {
+  await appendFile(process.env.GITHUB_OUTPUT,
+    `added=${added.join(', ').toUpperCase()}\ncount=${added.length}\ntotal=${newW.length.toLocaleString('en-US')}\n`);
+}
