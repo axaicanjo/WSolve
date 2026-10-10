@@ -78,6 +78,18 @@ await writeFile(FILE, out);
 console.log(`added ${added.length}: ${added.join(' ').toUpperCase()}`);
 console.log(`answers ${W.length} -> ${newW.length}; other valid guesses ${G.length} -> ${newG.length}`);
 
+// Log the addition in added-words.md (oldest first; a new row goes at the end of the table).
+const LOG = process.cwd() + '/added-words.md';
+try {
+  const day = new Date().toLocaleDateString('en-GB',
+    { timeZone: 'America/New_York', day: 'numeric', month: 'short', year: 'numeric' });
+  let log = await readFile(LOG, 'utf8');
+  if (!log.endsWith('\n')) log += '\n';
+  await writeFile(LOG, log + `| ${day} | ${added.join(', ').toUpperCase()} | ${newW.length.toLocaleString('en-US')} |\n`);
+} catch (e) {
+  console.error('could not update added-words.md: ' + e.message);
+}
+
 // For the GitHub task: hand the result to the step that sends the notice.
 if (process.env.GITHUB_OUTPUT) {
   await appendFile(process.env.GITHUB_OUTPUT,
