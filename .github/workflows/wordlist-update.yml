@@ -9,6 +9,7 @@ name: Update answer word list
 # 8:05 p.m. EST (winter). The other run lands at 7:05 or 9:05 p.m. and does no harm.
 # GitHub often starts scheduled runs late (hours, at busy times).
 #
+# Each addition is also logged in added-words.md.
 # When words are added it also opens a GitHub issue listing them and the new total;
 # GitHub emails that to the account's notification address.
 #
@@ -51,7 +52,7 @@ jobs:
           fi
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add words.js
+          git add words.js added-words.md
           git commit -m "Add new answers from word.tips ($(date -u +%Y-%m-%d))"
           git pull --rebase
           git push
