@@ -9,6 +9,9 @@ name: Update answer word list
 # 8:05 p.m. EST (winter). The other run lands at 7:05 or 9:05 p.m. and does no harm.
 # GitHub often starts scheduled runs late (hours, at busy times).
 #
+# When words are added it also opens a GitHub issue listing them and the new total;
+# GitHub emails that to the account's notification address.
+#
 # To run it by hand: Actions tab -> "Update answer word list" -> Run workflow.
 
 on:
@@ -19,6 +22,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: wordlist-update
@@ -36,6 +40,7 @@ jobs:
           node-version: '20'
 
       - name: Add new answers from word.tips
+        id: upd
         run: node update-wordlist.mjs
 
       - name: Commit if changed
@@ -50,3 +55,19 @@ jobs:
           git commit -m "Add new answers from word.tips ($(date -u +%Y-%m-%d))"
           git pull --rebase
           git push
+
+      - name: Notify (GitHub issue -> email)
+        if: steps.upd.outputs.count != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ADDED: ${{ steps.upd.outputs.added }}
+          COUNT: ${{ steps.upd.outputs.count }}
+          TOTAL: ${{ steps.upd.outputs.total }}
+        run: |
+          DAY=$(TZ=America/New_York date +'%-d %b %Y')
+          if [ "$COUNT" = "1" ]; then NOUN=word; else NOUN=words; fi
+          printf 'Added %s new %s to the answer list on %s:\n\n**%s**\n\nThe list now has **%s** words.\n\n@axaicanjo\n' \
+            "$COUNT" "$NOUN" "$DAY" "$ADDED" "$TOTAL" > /tmp/body.md
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Word list: added $ADDED ($TOTAL words)" \
+            --body-file /tmp/body.md
