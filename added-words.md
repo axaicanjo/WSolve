@@ -9,3 +9,4 @@ automatically whenever it adds words. Words are never removed.
 | 8 Oct 2026 | BUMPY, GRIST, HOLEY, PARCH, PSYCH, SCOOT, STREW, TRILL, UNCAP, YAHOO, YODEL | 2,394 |
 | 9 Oct 2026 | DRECK | 2,395 |
 | 10 Oct 2026 | PRATE | 2,396 |
+| 16 Oct 2026 | KARAT | 2,397 |
