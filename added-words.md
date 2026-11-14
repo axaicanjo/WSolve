@@ -17,3 +17,4 @@ automatically whenever it adds words. Words are never removed.
 | 31 Oct 2026 | SHEAF | 2,402 |
 | 2 Nov 2026 | PEONY | 2,403 |
 | 5 Nov 2026 | DORKY | 2,404 |
+| 14 Nov 2026 | ZILCH | 2,405 |
