@@ -19,3 +19,4 @@ automatically whenever it adds words. Words are never removed.
 | 5 Nov 2026 | DORKY | 2,404 |
 | 14 Nov 2026 | ZILCH | 2,405 |
 | 15 Nov 2026 | AGAVE | 2,406 |
+| 16 Nov 2026 | REMAP | 2,407 |
