@@ -621,7 +621,8 @@ function render() {
   p2.appendChild(el('h2', null, (HIST.length ? 'Best next guess' : 'Best opening guess')
     + (wholePool ? ' · all valid guesses' : '')
     + (hardMode && HIST.length ? ' · hard mode' : '')
-    + (useHist ? ' · historic weighting on' : '')));
+    + (useHist ? ' · historic weighting on' : '')
+    + (last.mode === 'look' ? ' · look-ahead' : '')));
   /* Entropy is reported as a share of the best available guess rather than in
      bits. `2^H` is the effective number of outcomes a guess splits the pool
      into, so 2^(H − Hbest) is the fraction of the best word's splitting power —
@@ -632,7 +633,12 @@ function render() {
   const inPool = s => (wholePool ? s.validGuess !== false : s.inSolutions !== false)
                       && s.hardOk !== false;
 
-  const hmax = last.suggestions[0].H;
+  const LOOK = last.mode === 'look';
+  /* In look-ahead mode the list is sorted by expected guesses, so the most
+     informative word is no longer necessarily first. */
+  const hmax = Math.max(...last.suggestions.map(x => x.H));
+  const egBest = LOOK ? last.suggestions[0].eg : null;
+  const BIG = 1e8;
   /* Capped at 100. A word you typed can be stronger than anything on the list —
      a probe while the pool is the answer list, or a word hard mode has ruled
      out — and reading "110%" against a scale whose top is defined as 100 is
@@ -648,7 +654,10 @@ function render() {
     row.appendChild(r);
     row.appendChild(el('span', 'word', s.word));
     const meta = el('span', 'meta');
-    meta.innerHTML = fmtShare(share(s.H)) + ' &middot; ~' + s.exp.toFixed(1) +
+    const lead = !LOOK ? fmtShare(share(s.H))
+      : (s.eg == null || s.eg >= BIG ? '<span class="warn">can\'t promise a solve in 6</span>'
+         : '<b>' + s.eg.toFixed(2) + '</b> guesses to finish');
+    meta.innerHTML = lead + ' &middot; ~' + s.exp.toFixed(1) +
       ' left &middot; worst case ' + nf(s.worst) + ' &middot; ' +
       (s.isCand ? '<span class="can">could be the answer</span>'
                 : '<span class="cant">cannot be the answer</span>');
@@ -671,7 +680,9 @@ function render() {
       meta.innerHTML += '<br><span class="warn">does not use every clue — hard mode would reject it</span>';
     }
     const bar = el('span', 'bar'); const fill = el('i');
-    fill.style.width = Math.max(3, share(s.H)) + '%';   // the bar shows the same measure as the number
+    // the bar shows the same measure as the number
+    fill.style.width = Math.max(3, !LOOK ? share(s.H)
+      : (s.eg == null || s.eg >= BIG ? 0 : Math.min(100, egBest / s.eg * 100))) + '%';
     bar.appendChild(fill); meta.appendChild(bar);
     row.appendChild(meta);
     row.appendChild(el('span', 'go', 'USE'));
@@ -694,7 +705,12 @@ function render() {
     p2.appendChild(sugRow(mine ? pinned.stats : s, String(i + 1), mine, false));
   });
 
-  p2.appendChild(el('div', 'sub', (useHist
+  p2.appendChild(el('div', 'sub', (LOOK
+    ? 'With fewer than 50 words left, guesses are ranked by the average number of guesses still needed to finish (this one included)'
+      + (useHist ? ', with every word weighted by its chance of being the answer' : '')
+      + (last.guarantee ? ', among guesses that still solve every remaining word within six. '
+                        : '. No guess can promise a solve within six from here, so this is the average alone. ')
+    : useHist
     ? 'Percentages compare each word with the best available guess, with every word weighted by its chance of being the answer. '
     : 'Percentages compare each word with the best available guess: 100% is the most informative word in the list, and every remaining word is treated as equally likely. ')
     + 'Tap a row to see how it splits the pool; tap USE to play it. '

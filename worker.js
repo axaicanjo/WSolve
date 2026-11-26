@@ -1,4 +1,4 @@
-/* Beat the Bot — pattern matrix + entropy ranking (runs off the main thread) */
+/* Beat the Bot v2 — pattern matrix, entropy ranking and small-list look-ahead (runs off the main thread) */
 'use strict';
 
 let W = [];          // words, lowercase
@@ -172,6 +172,8 @@ function weightsFor(cand, useHist, rho, autoRate) {
 }
 
 const byValue = (a, b) => (b.H - a.H) || (b.isCand - a.isCand) || (a.worst - b.worst);
+/* v2 look-ahead order: fewest expected guesses, then could-be-the-answer, then information. */
+const byLook = (a, b) => (a.eg - b.eg) || (b.isCand - a.isCand) || (b.H - a.H) || (a.worst - b.worst);
 
 /* ---------- the guess pool ----------
    Every candidate is a solution word, so MAT already covers each
@@ -338,6 +340,177 @@ function groupsFor(word, cand, showHist) {
   return out;
 }
 
+/* ---------- v2: look-ahead for small candidate lists ----------
+   Below LOOK_MAX candidates the suggestions are ranked by the expected number
+   of guesses still needed to finish (this one included), not by information.
+   Information gives no credit for a guess that might itself be the answer;
+   this does. Every plan must also solve EVERY remaining candidate — including
+   words the historic model gives zero weight — within the six guesses, so a
+   bet on the likely words can never cost the game.
+
+   The search is approximate: at each step it tries every remaining candidate,
+   the LOOK_K most informative guesses and the LOOK_W guesses with the smallest
+   worst case. Below the first step the guesses come from the LOOK_SUB best
+   guesses at the top. In hard mode every hypothetical later guess obeys the
+   clues before it, as the game would require. If the search runs past LOOK_MS it gives up and
+   the plain information ranking is used instead. */
+const LOOK_MAX = 50, LOOK_K = 8, LOOK_W = 4, LOOK_SUB = 150, LOOK_MS = 4000;
+const LOOK_INF = 1e9;
+
+function lamNow(useHist, rho, autoRate) {
+  if (!useHist || !LASTUSED || TODAYNUM < 0) return 0;
+  return autoRate && FIT ? FIT.lam : lamForRate(rho);
+}
+
+/* A guess for the search: index into W when it is a solution word (so MAT
+   applies), otherwise its letter codes. */
+function lookGuess(word) {
+  const gi = IDX.has(word) ? IDX.get(word) : -1;
+  if (gi >= 0) return { word, gi, codes: CODES, off: gi * 5 };
+  const xi = XIDX.has(word) ? XIDX.get(word) : -1;
+  if (xi >= 0) return { word, gi: -1, codes: XCODES, off: xi * 5 };
+  const c = new Uint8Array(5);
+  for (let i = 0; i < 5; i++) c[i] = word.charCodeAt(i) - 97;
+  return { word, gi: -1, codes: c, off: 0 };
+}
+const LCNT = new Uint8Array(26);
+const lookPat = (g, s) => g.gi >= 0 ? MAT[g.gi * N + s] : patCodes(g.codes, g.off, CODES, s * 5, LCNT);
+
+/* Hard mode inside the search: each hypothetical guess adds its clue to the
+   rules the next one must follow, exactly as hardFrom does for real guesses. */
+function hardExtend(hs, g, p) {
+  const fixed = Int8Array.from(hs.fixed), need = Int8Array.from(hs.need);
+  const marks = decode(p), seen = new Int8Array(26);
+  for (let i = 0; i < 5; i++) {
+    const c = g.codes[g.off + i];
+    if (marks[i] === 2) fixed[i] = c;
+    if (marks[i] > 0) seen[c]++;
+  }
+  let any = false;
+  for (let c = 0; c < 26; c++) { if (seen[c] > need[c]) need[c] = seen[c]; if (need[c]) any = true; }
+  return { fixed, need, any };
+}
+const hardKey = hs => hs ? Array.from(hs.fixed).join('.') + ':' + Array.from(hs.need).join('') : '';
+const NOHARD = () => ({ fixed: new Int8Array(5).fill(-1), need: new Int8Array(26), any: false });
+
+function makeLook(useHist, rho, autoRate, rootGuesses, deadline, hard0) {
+  const lam = lamNow(useHist, rho, autoRate);
+  const histOn = useHist && LASTUSED && TODAYNUM >= 0;
+  const raw = i => !histOn ? 1 : (LASTUSED[i] < 0 ? 1 : lam * ageW(TODAYNUM - LASTUSED[i]));
+  const memo = new Map();
+  const bins = new Float64Array(243), cnts = new Int32Array(243);
+
+  function norm(S) {
+    const w = new Float64Array(S.length); let t = 0;
+    for (let i = 0; i < S.length; i++) { w[i] = raw(S[i]); t += w[i]; }
+    if (t > 0) for (let i = 0; i < S.length; i++) w[i] /= t; else w.fill(1 / S.length);
+    return w;
+  }
+  /* guesses worth trying on subset S, best first */
+  function poolFor(S, w, guesses, hs) {
+    const sc = [];
+    for (const g of guesses) {
+      if (hs && !hardOkCodes(g.codes, g.off, hs)) continue;
+      bins.fill(0); cnts.fill(0);
+      for (let i = 0; i < S.length; i++) { const p = lookPat(g, S[i]); bins[p] += w[i]; cnts[p]++; }
+      let H = 0, worst = 0;
+      for (let p = 0; p < 243; p++) {
+        if (bins[p] > 0) H -= bins[p] * Math.log(bins[p]) / LOG2;
+        if (cnts[p] > worst) worst = cnts[p];
+      }
+      sc.push({ g, H, worst });
+    }
+    const byH = sc.slice().sort((a, b) => b.H - a.H);
+    const byW = sc.slice().sort((a, b) => a.worst - b.worst || b.H - a.H);
+    const out = new Map();
+    for (const s of S) out.set(W[s], lookGuess(W[s]));
+    for (const x of byH.slice(0, LOOK_K)) out.set(x.g.word, x.g);
+    for (const x of byW.slice(0, LOOK_W)) out.set(x.g.word, x.g);
+    return { pool: [...out.values()], ranked: byH.map(x => x.g) };
+  }
+  function cost(S, left, hs) {
+    if (Date.now() > deadline) throw new Error('look-ahead timeout');
+    const key = S.join(',') + '|' + left + '|' + hardKey(hs);
+    const hit = memo.get(key);
+    if (hit) return hit;
+    let r;
+    const w = norm(S);
+    if (left < 1) r = { e: LOOK_INF, g: null };
+    else if (S.length === 1) r = { e: 1, g: W[S[0]] };
+    else if (left === 1) r = { e: LOOK_INF, g: null };
+    else if (S.length === 2) { const j = w[1] > w[0] ? 1 : 0; r = { e: 2 - w[j], g: W[S[j]] }; }
+    else {
+      const { pool } = poolFor(S, w, SUBPOOL, hs);
+      r = { e: LOOK_INF, g: null };
+      for (const g of pool) {
+        const e = after(g, S, w, left, hs);
+        if (e < r.e) r = { e, g: g.word };
+      }
+    }
+    memo.set(key, r);
+    return r;
+  }
+  /* expected guesses to finish when g is played now with `left` guesses
+     remaining (g included) */
+  function after(g, S, w, left, hs) {
+    const parts = new Map();
+    for (let i = 0; i < S.length; i++) {
+      const p = lookPat(g, S[i]);
+      let a = parts.get(p); if (!a) { a = { s: [], q: 0 }; parts.set(p, a); }
+      a.s.push(S[i]); a.q += w[i];
+    }
+    if (parts.size === 1 && !parts.has(242)) return LOOK_INF;   // learns nothing
+    let e = 1;
+    for (const [p, a] of parts) {
+      if (p === 242) continue;
+      const c = cost(a.s, left - 1, hs ? hardExtend(hs, g, p) : null).e;
+      if (c >= LOOK_INF) return LOOK_INF;
+      e += a.q * c;
+    }
+    return e;
+  }
+  let SUBPOOL = rootGuesses.slice(0, LOOK_SUB);
+  return {
+    norm, after,
+    /* score every guess in the root pool; returns them sorted, feasible first */
+    root(S, left, extraWords) {
+      const w = norm(S);
+      const { pool } = poolFor(S, w, rootGuesses.slice(0, Math.max(LOOK_SUB, LOOK_K)), hard0);
+      const seen = new Set(pool.map(g => g.word));
+      for (const x of extraWords || []) if (!seen.has(x)) { pool.push(lookGuess(x)); seen.add(x); }
+      for (const s of S) SUBPOOL.push(lookGuess(W[s]));
+      return pool.map(g => ({ word: g.word, eg: after(g, S, w, left, hard0) }));
+    }
+  };
+}
+
+/* Re-rank the suggestions by look-ahead. `ranked` is the full information
+   ranking (already filtered for hard mode and the guess pool). Returns null when
+   the look-ahead does not apply or runs out of time, so the caller keeps the
+   information ranking. */
+function lookAhead(cand, ranked, m, extraWords) {
+  const S = Array.from(cand);
+  const left = 6 - m.history.length;
+  if (S.length < 2 || S.length >= LOOK_MAX || left < 1) return null;
+  try {
+    const rootG = ranked.map(r => lookGuess(r.word));
+    const hard0 = m.hardMode ? (hardFrom(m.history) || NOHARD()) : null;
+    const L = makeLook(!!m.useHist, m.rho, !!m.autoRate, rootG, Date.now() + LOOK_MS, hard0);
+    let scored = L.root(S, left, extraWords);
+    let guarantee = scored.some(x => x.eg < LOOK_INF);
+    if (!guarantee) {
+      /* Already too late to be sure of six (or nothing tried can promise it):
+         drop the limit and just minimise the expected count. */
+      const L2 = makeLook(!!m.useHist, m.rho, !!m.autoRate, rootG, Date.now() + LOOK_MS, hard0);
+      scored = L2.root(S, 20, extraWords);
+    }
+    const info = new Map(ranked.map(r => [r.word, r]));
+    return { guarantee, left, scored, info };
+  } catch (err) {
+    return null;
+  }
+}
+
 onmessage = (e) => {
   const m = e.data;
   if (m.type === 'init') {
@@ -379,10 +552,21 @@ onmessage = (e) => {
   if (m.type === 'compute') {
     const cand = filter(m.history);
     let suggestions = [], groups = [], pick = null, words = [], lastUsed = [], probs = [];
+    let mode = 'info', guarantee = true;
     const showHist = !!m.useHist;
     if (cand.length > 0) {
       const w = weightsFor(cand, showHist, m.rho, !!m.autoRate);
-      suggestions = rank(cand, 10, w, !!m.wholeDictionary, m.hardMode ? hardFrom(m.history) : null);
+      const all = rankAll(cand, w, !!m.wholeDictionary, m.hardMode ? hardFrom(m.history) : null);
+      suggestions = all.slice(0, 10);
+      const la = lookAhead(cand, all, m);
+      if (la) {
+        mode = 'look'; guarantee = la.guarantee;
+        suggestions = la.scored
+          .filter(x => x.eg < LOOK_INF)
+          .map(x => Object.assign({}, la.info.get(x.word), { eg: x.eg }))
+          .sort(byLook)
+          .slice(0, 10);
+      }
       pick = m.focus && suggestions.some(s => s.word === m.focus) ? m.focus : suggestions[0].word;
       groups = groupsFor(pick, cand, showHist);
       // Probabilities are part of the historic model, so they go with it. With
@@ -399,7 +583,7 @@ onmessage = (e) => {
     }
     postMessage({
       type: 'result', count: cand.length, words, lastUsed, probs,
-      suggestions, groups, pick, token: m.token
+      suggestions, groups, pick, mode, guarantee, token: m.token
     });
     return;
   }
@@ -427,12 +611,24 @@ onmessage = (e) => {
        still gets a meaningful "it would come in at #N" against that pool. */
     const hard = m.hardMode ? hardFrom(m.history) : null;
     const all = rankAll(cand, w, !!m.wholeDictionary, hard);
-    let rankPos = 1;
-    for (const e of all) if (byValue(e, st) < 0) rankPos++;
+    let rankPos = 1, total = all.length, eg = null;
+    const la = lookAhead(cand, all, m, [m.word]);
+    if (la) {
+      /* Rank against the same look-ahead list the suggestions come from. */
+      const mine = la.scored.find(x => x.word === m.word);
+      eg = mine ? mine.eg : null;
+      const me = Object.assign({}, st, { eg: eg == null ? LOOK_INF : eg });
+      const others = la.scored.filter(x => x.word !== m.word && x.eg < LOOK_INF)
+        .map(x => Object.assign({}, la.info.get(x.word), { eg: x.eg }));
+      rankPos = 1 + others.filter(o => byLook(o, me) < 0).length;
+      total = others.length + 1;
+    } else {
+      for (const e of all) if (byValue(e, st) < 0) rankPos++;
+    }
     postMessage({
       type: 'analysis', word: m.word, token: m.token,
       stats: { word: m.word, H: st.H, exp: st.exp, worst: st.worst, isCand: st.isCand,
-               rank: rankPos, total: all.length,
+               rank: rankPos, total, eg, look: !!la, guarantee: la ? la.guarantee : true,
                inSolutions: IDX.has(m.word), validGuess: IDX.has(m.word) || XIDX.has(m.word),
                hardOk: hard ? hardOkWord(m.word, hard) : true },
       groups: groupsFor(m.word, cand, showHist)

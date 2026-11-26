@@ -73,6 +73,7 @@ header{
   border-bottom:1px solid var(--line); flex:0 0 auto;
 }
 header h1{font-size:15px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;margin:0;flex:1}
+header h1 .ver{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:none;color:var(--accent);margin-left:4px}
 .chip{
   font-size:12px; padding:4px 9px; border-radius:999px; background:var(--raise);
   color:var(--dim); border:1px solid var(--line); white-space:nowrap;
@@ -258,7 +259,7 @@ header h1{font-size:14px}
 <div id="boot"><div class="bt">Preparing solver</div><div class="track"><i id="bootbar"></i></div></div>
 
 <header>
-  <h1>Beat the Bot</h1>
+  <h1>Beat the Bot <span class="ver">v2</span></h1>
   <span class="chip" id="cnt">&mdash;</span>
   <button class="iconbtn gear" id="gear" aria-label="Settings">&#9881;</button>
   <button class="iconbtn" id="undo">Undo</button>
